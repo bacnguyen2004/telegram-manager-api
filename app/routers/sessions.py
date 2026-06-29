@@ -16,9 +16,17 @@ async def list_sessions() -> dict:
     if session_dir.exists():
         sessions = sorted(path.stem for path in session_dir.glob("*.session"))
 
+    hint = ""
+    if not sessions:
+        hint = (
+            "Chua co session. Dang nhap tren Telegram app chua du — "
+            "goi POST /api/auth/send-code roi POST /api/auth/login."
+        )
+
     data = SessionsData(
         session_dir=str(session_dir),
         count=len(sessions),
         sessions=sessions,
+        hint=hint,
     )
     return success_response(data.model_dump())

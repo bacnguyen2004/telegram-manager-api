@@ -23,7 +23,8 @@ class Settings:
     telegram_api_hash: str = os.getenv("TELEGRAM_API_HASH", "")
 
     session_dir: Path = resolve_project_path(
-        os.getenv("SESSION_FOLDER") or os.getenv("SESSION_DIR", "../session")
+        os.getenv("SESSION_FOLDER")
+        or os.getenv("SESSION_DIR", "runtime/sessions")
     )
 
     session_lock_timeout: float = float(os.getenv("TG_SESSION_LOCK_TIMEOUT", "180") or 180)

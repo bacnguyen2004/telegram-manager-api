@@ -10,9 +10,12 @@ from app.main import app
 
 def main() -> None:
     with TestClient(app) as client:
-        for path in ["/", "/api/health", "/api/sessions"]:
+        for path in ["/", "/api/health", "/api/sessions", "/docs"]:
             response = client.get(path)
-            print(path, response.status_code, response.json())
+            if path == "/docs":
+                print(path, response.status_code, "html")
+            else:
+                print(path, response.status_code, response.json())
 
 
 if __name__ == "__main__":

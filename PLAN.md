@@ -57,22 +57,23 @@ Level 6 (1–2 tuần)   Test + Docker + đóng gói portfolio
 
 **Mục tiêu:** Giải thích được project cho người phỏng vấn trong 2 phút.
 
-**Chỉ đọc 7 file (theo thứ tự):**
+**Chỉ đọc 8 file (theo thứ tự):**
 
-1. `app/main.py` — app khởi động thế nào
+1. `app/main.py` — setup steps khi chưa có session
 2. `app/config.py` — đọc biến từ `.env`
-3. `app/routers/groups.py` — endpoint mỏng
-4. `app/services/telegram/groups.py` — logic join
-5. `app/services/telegram/client.py` — connect Telethon
-6. `app/utils/session_lock.py` — vì sao cần lock
+3. `app/routers/auth.py` — send-code, login
+4. `app/services/telegram/auth.py` — tạo file `.session`
+5. `app/routers/groups.py` + `services/telegram/groups.py` — join
+6. `app/utils/session_lock.py` — lock file session
 7. `app/utils/responses.py` — format response chuẩn
 
 **Bài tập (tự làm):**
 
-- [ ] Tạo `.env` từ `.env.example`, chạy `uvicorn app.main:app --reload`
-- [ ] Gọi `GET /api/health`, `GET /api/sessions` trên `/docs`
-- [ ] Vẽ sơ đồ 1 request `POST /api/groups/join` (router → service → Telethon)
-- [ ] Viết 5 câu tóm tắt project (dùng cho CV / cover letter)
+- [ ] Tạo `.env` (API ID/HASH từ https://my.telegram.org)
+- [ ] `POST /api/auth/send-code` → nhận OTP trên Telegram app
+- [ ] `POST /api/auth/login` → `GET /api/sessions` thấy count = 1
+- [ ] `POST /api/groups/join` với account vừa login
+- [ ] Vẽ sơ đồ: send-code → login → join
 
 **Câu phỏng vấn luyện tập:**
 
@@ -354,31 +355,44 @@ Task async:
 >
 > Học theo **mục 2** trước; quay lại đây khi implement từng phase.
 
-### Phase 0 — Nền tảng (Level 1, gọn) ✅
+### Phase 0 — Nền tảng (Level 1) ✅
 
-Mục tiêu: API chạy được, dễ học — **chỉ giữ code đang dùng**. (Tương ứng **Level 1**)
+Mục tiêu: Bắt đầu **không có file `.session`** — chỉ mới đăng nhập Telegram app. (Level 1)
 
-- [x] Đổi tên → `telegram-manager-api`
-- [x] Init git + `.gitignore` (thêm `*.session`)
+> **Lưu ý:** Đăng nhập Telegram trên điện thoại ≠ có session cho API.  
+> Phải gọi `send-code` + `login` qua API để Telethon tạo file `.session` trên disk.
+
 - [x] Cấu trúc `routers/`, `services/`, `utils/`, `schemas/`
 - [x] `config.py`: Telegram API + `SESSION_FOLDER` + session lock
 - [x] Response envelope + exception handler
-- [x] Health check: Telegram config + session dir
-- [x] `POST /api/groups/join` + session lock cross-process
-- [ ] ~~DB / Alembic / Redis~~ → **Level 3** (Phase 1) mới thêm lại
+- [x] `POST /api/auth/send-code` — gửi OTP
+- [x] `POST /api/auth/login` — tạo file `.session` (hỗ trợ 2FA)
+- [x] `GET /api/sessions` — kiểm tra đã có session chưa
+- [x] `POST /api/groups/join` + session lock
+- [ ] DB / Alembic / Redis → **Level 3**
 
-**Deliverable:** Repo chạy được, OpenAPI docs, 3 endpoint (`health`, `sessions`, `groups/join`).
+**Luồng dùng từ đầu (không có session):**
+
+```
+1. .env          TELEGRAM_API_ID + HASH (https://my.telegram.org)
+2. send-code     OTP gửi về Telegram app
+3. login         Nhập OTP → tạo file .session
+4. sessions      Xác nhận count >= 1
+5. groups/join   Join group
+```
+
+**Deliverable:** Repo chạy được, OpenAPI docs, **tự tạo session qua API**, join group.
 
 **Cấu trúc Phase 0 (đọc theo thứ tự):**
 
 ```
 app/
-├── main.py
+├── main.py           ← setup steps khi GET /
 ├── config.py
-├── routers/          health, sessions, groups
+├── routers/          health, auth, sessions, groups
 ├── services/
 │   ├── health.py
-│   └── telegram/     client.py, groups.py
+│   └── telegram/     auth.py, client.py, groups.py
 ├── schemas/
 └── utils/            responses, exceptions, session_lock
 ```

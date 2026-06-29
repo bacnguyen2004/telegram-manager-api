@@ -55,7 +55,8 @@ class TelegramJoinService:
         if not session_file.exists():
             return self._result(
                 "error",
-                f"Khong tim thay session: {session_file}",
+                "Chua co session. Dang nhap Telegram app chua du — "
+                "hay goi POST /api/auth/send-code roi POST /api/auth/login de tao file .session.",
                 phone,
                 group_link,
             )

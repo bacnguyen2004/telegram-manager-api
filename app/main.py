@@ -7,6 +7,15 @@ from .routers import api_router
 from .utils.exceptions import register_exception_handlers
 
 
+SETUP_STEPS = [
+    "1. Dien TELEGRAM_API_ID + TELEGRAM_API_HASH trong .env (lay tu https://my.telegram.org)",
+    "2. POST /api/auth/send-code — gui OTP ve Telegram app",
+    "3. POST /api/auth/login — nhap ma OTP (va password 2FA neu co)",
+    "4. GET /api/sessions — xac nhan da co file .session",
+    "5. POST /api/groups/join — join group/channel",
+]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_runtime_dirs()
@@ -24,4 +33,9 @@ async def root() -> dict:
         "app": settings.app_name,
         "docs": "/docs",
         "api_prefix": settings.api_prefix,
+        "note": (
+            "Dang nhap Telegram tren dien thoai KHONG tu dong tao session cho API. "
+            "Can buoc 2-3 ben duoi."
+        ),
+        "setup": SETUP_STEPS,
     }
