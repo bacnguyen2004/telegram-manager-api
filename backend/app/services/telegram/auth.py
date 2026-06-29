@@ -8,10 +8,13 @@ from telethon.errors import (
     PhoneCodeInvalidError,
     PhoneNumberBannedError,
     PhoneNumberInvalidError,
+    PhoneNumberUnoccupiedError,
     PrivacyKeyInvalidError,
     PrivacyTooLongError,
     SessionPasswordNeededError,
 )
+from telethon.tl import types
+from telethon.tl.functions.auth import SignUpRequest
 from telethon.tl.functions.account import SetPrivacyRequest
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.types import (
@@ -58,7 +61,7 @@ class TelegramAuthService:
                 self._save_phone_code_hash(phone, sent.phone_code_hash)
                 return self._result(
                     "success",
-                    "Da gui ma OTP qua Telegram app. Tiep theo goi POST /api/auth/login hoac /api/auth/register",
+                    "Da gui ma OTP qua Telegram app. Nhap ma o buoc tiep theo.",
                     phone,
                 )
         except PhoneNumberBannedError:
@@ -131,6 +134,12 @@ class TelegramAuthService:
                 me = await client.get_me()
                 self._clear_pending_auth(phone)
                 return self._success_result(phone, session_file, me)
+        except PhoneNumberUnoccupiedError:
+            return self._result(
+                "need_signup",
+                "So chua co tai khoan Telegram. Nhap ten de hoan tat dang ky.",
+                phone,
+            )
         except PhoneCodeInvalidError:
             return self._result("error", "Ma OTP khong hop le", phone)
         except PhoneCodeExpiredError:
@@ -190,13 +199,21 @@ class TelegramAuthService:
                     self._clear_pending_auth(phone)
                     return self._success_result(phone, session_file, me)
 
-                await client.sign_up(
-                    code,
-                    first_name=first_name,
-                    last_name=last_name,
-                    phone=phone,
-                    phone_code_hash=phone_code_hash,
+                result = await client(
+                    SignUpRequest(
+                        phone_number=phone,
+                        phone_code_hash=phone_code_hash,
+                        first_name=first_name,
+                        last_name=last_name,
+                    )
                 )
+                if not isinstance(result, types.auth.Authorization):
+                    return self._result(
+                        "error",
+                        "Dang ky that bai: phan hoi khong hop le tu Telegram",
+                        phone,
+                    )
+                await client._on_login(result.user)
                 me = await client.get_me()
                 self._clear_pending_auth(phone)
                 return self._success_result(

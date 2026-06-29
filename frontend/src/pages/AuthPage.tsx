@@ -1,26 +1,206 @@
-import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 
-type AuthMode = 'login' | 'register'
-type LoginStep = 'phone' | 'code' | '2fa' | 'done'
-type RegisterStep = 'phone' | 'profile' | 'done'
+type Step = 'phone' | 'code' | '2fa' | 'profile' | 'done'
+type VerifyKind = '2fa' | 'signup' | null
 
-const LOGIN_STEPS = ['Gửi OTP', 'Nhập mã', '2FA', 'Hoàn tất'] as const
-const LOGIN_2FA_STEP_INDEX = 2
-const REGISTER_STEPS = ['Gửi OTP', 'Thông tin', 'Hoàn tất'] as const
+const VERIFY_STEP_INDEX = 2
 
 export function AuthPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const mode: AuthMode = searchParams.get('mode') === 'register' ? 'register' : 'login'
+  const navigate = useNavigate()
+  const [step, setStep] = useState<Step>('phone')
+  const [verifyKind, setVerifyKind] = useState<VerifyKind>(null)
+  const [skippedVerify, setSkippedVerify] = useState(false)
+  const [wasSignup, setWasSignup] = useState(false)
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [accountInfo, setAccountInfo] = useState({
+    first_name: '',
+    last_name: '',
+    username: '',
+    session_file: '',
+  })
 
-  function setMode(next: AuthMode) {
-    if (next === 'register') {
-      setSearchParams({ mode: 'register' })
-    } else {
-      setSearchParams({})
+  const stepIndex =
+    step === 'phone' ? 0 : step === 'code' ? 1 : step === '2fa' || step === 'profile' ? 2 : 3
+
+  const stepperLabels = useMemo(() => {
+    const verifyLabel =
+      verifyKind === 'signup' ? 'Thông tin' : verifyKind === '2fa' ? '2FA' : 'Xác thực'
+    return ['Gửi OTP', 'Nhập mã', verifyLabel, 'Hoàn tất'] as const
+  }, [verifyKind])
+
+  function applyAccountResult(
+    data: {
+      first_name: string
+      last_name: string
+      username: string
+      session_file: string
+      message: string
+    },
+    signup: boolean,
+  ) {
+    setAccountInfo({
+      first_name: data.first_name,
+      last_name: data.last_name,
+      username: data.username,
+      session_file: data.session_file,
+    })
+    setWasSignup(signup)
+    setSuccess(data.message)
+    setStep('done')
+  }
+
+  async function handleSendCode(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    setSuccess('')
+    setVerifyKind(null)
+    setSkippedVerify(false)
+    try {
+      const res = await api.sendCode(phone.trim())
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Gửi mã thất bại')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      if (res.data.status === 'info') {
+        setSuccess(res.data.message)
+        return
+      }
+      setSuccess(res.data.message)
+      setStep('code')
+    } catch {
+      setError('Không kết nối được API. Kiểm tra backend đang chạy port 8001.')
+    } finally {
+      setLoading(false)
     }
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const res = await api.login(phone.trim(), code.trim())
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Xác thực thất bại')
+        return
+      }
+      if (res.data.status === 'need_2fa') {
+        setSkippedVerify(false)
+        setVerifyKind('2fa')
+        setSuccess(res.data.message)
+        setStep('2fa')
+        return
+      }
+      if (res.data.status === 'need_signup') {
+        setSkippedVerify(false)
+        setVerifyKind('signup')
+        setSuccess(res.data.message)
+        setStep('profile')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      setSkippedVerify(true)
+      setVerifyKind(null)
+      applyAccountResult(res.data, false)
+    } catch {
+      setError('Không kết nối được API khi xác thực.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handle2fa(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const res = await api.login(phone.trim(), code.trim(), password)
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Xác thực 2FA thất bại')
+        return
+      }
+      if (res.data.status === 'need_signup') {
+        setVerifyKind('signup')
+        setSuccess(res.data.message)
+        setStep('profile')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      if (res.data.status === 'need_2fa') {
+        setError(res.data.message)
+        return
+      }
+      setSkippedVerify(false)
+      setVerifyKind('2fa')
+      applyAccountResult(res.data, false)
+    } catch {
+      setError('Không kết nối được API khi xác thực 2FA.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const res = await api.register(phone.trim(), code.trim(), firstName.trim(), lastName.trim())
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Đăng ký thất bại')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      setSkippedVerify(false)
+      setVerifyKind('signup')
+      applyAccountResult(res.data, true)
+    } catch {
+      setError('Không kết nối được API khi đăng ký.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function resetForm() {
+    setStep('phone')
+    setVerifyKind(null)
+    setSkippedVerify(false)
+    setWasSignup(false)
+    setPhone('')
+    setCode('')
+    setPassword('')
+    setFirstName('')
+    setLastName('')
+    setError('')
+    setSuccess('')
+    setAccountInfo({ first_name: '', last_name: '', username: '', session_file: '' })
   }
 
   return (
@@ -29,29 +209,160 @@ export function AuthPage() {
         <div>
           <h1>Tài khoản</h1>
           <p className="page-desc">
-            Gửi OTP → nhập mã → 2FA (nếu có) → tạo file <code>.session</code>
+            Nhập số điện thoại và mã OTP — Telegram tự nhận đăng nhập hay đăng ký. Hỗ trợ 2FA
+            nếu có.
           </p>
         </div>
       </header>
 
-      <div className="tab-bar auth-mode-tabs">
-        <button
-          type="button"
-          className={`tab-btn${mode === 'login' ? ' tab-btn--active' : ''}`}
-          onClick={() => setMode('login')}
-        >
-          Đăng nhập
-        </button>
-        <button
-          type="button"
-          className={`tab-btn${mode === 'register' ? ' tab-btn--active' : ''}`}
-          onClick={() => setMode('register')}
-        >
-          Đăng ký mới
-        </button>
-      </div>
+      <div className="auth-flow">
+        <AuthStepper
+          steps={stepperLabels}
+          currentIndex={stepIndex}
+          skippedIndex={skippedVerify ? VERIFY_STEP_INDEX : undefined}
+        />
 
-      {mode === 'login' ? <LoginFlow /> : <RegisterFlow />}
+        <div className="auth-body">
+          <Alert type="error" message={error} />
+          <Alert type="success" message={success} />
+
+          <section className="panel auth-form-panel">
+            {step === 'phone' && (
+              <form onSubmit={(e) => void handleSendCode(e)}>
+                <h2>Gửi mã OTP</h2>
+                <p className="form-meta">
+                  Dùng cho mọi số — Telegram sẽ gửi mã xác thực qua app
+                </p>
+                <label className="field">
+                  <span>Số điện thoại (E.164)</span>
+                  <input
+                    type="tel"
+                    placeholder="+84901234567"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </label>
+                <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
+                  {loading ? 'Đang gửi…' : 'Gửi mã OTP'}
+                </button>
+              </form>
+            )}
+
+            {step === 'code' && (
+              <form onSubmit={(e) => void handleVerifyCode(e)}>
+                <h2>Nhập mã OTP</h2>
+                <p className="form-meta">
+                  Mã đã gửi tới <strong>{phone}</strong>
+                </p>
+                <label className="field">
+                  <span>Mã xác thực</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="12345"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </label>
+                <div className="form-actions">
+                  <button type="button" className="btn btn--ghost" onClick={() => setStep('phone')}>
+                    Quay lại
+                  </button>
+                  <button type="submit" className="btn btn--primary" disabled={loading}>
+                    {loading ? 'Đang xác thực…' : 'Tiếp tục'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {step === '2fa' && (
+              <form onSubmit={(e) => void handle2fa(e)}>
+                <h2>Mật khẩu 2FA</h2>
+                <p className="form-meta">
+                  Tài khoản <strong>{phone}</strong> bật xác thực 2 bước
+                </p>
+                <label className="field">
+                  <span>Mật khẩu Cloud Password</span>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </label>
+                <div className="form-actions">
+                  <button type="button" className="btn btn--ghost" onClick={() => setStep('code')}>
+                    Quay lại
+                  </button>
+                  <button type="submit" className="btn btn--primary" disabled={loading}>
+                    {loading ? 'Đang xác thực…' : 'Xác nhận 2FA'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {step === 'profile' && (
+              <form onSubmit={(e) => void handleRegister(e)}>
+                <h2>Hoàn tất đăng ký</h2>
+                <p className="form-meta">
+                  Số <strong>{phone}</strong> chưa có tài khoản — nhập tên để tạo tài khoản mới
+                </p>
+                <label className="field">
+                  <span>Tên</span>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </label>
+                <label className="field">
+                  <span>Họ (tuỳ chọn)</span>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                  />
+                </label>
+                <div className="form-actions">
+                  <button type="button" className="btn btn--ghost" onClick={() => setStep('code')}>
+                    Quay lại
+                  </button>
+                  <button type="submit" className="btn btn--primary" disabled={loading}>
+                    {loading ? 'Đang tạo tài khoản…' : 'Tạo tài khoản'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {step === 'done' && (
+              <div className="done-panel">
+                <div className="done-icon">✓</div>
+                <h2>{wasSignup ? 'Đăng ký thành công' : 'Đăng nhập thành công'}</h2>
+                <AccountDetails phone={phone} accountInfo={accountInfo} />
+                <div className="form-actions">
+                  <button type="button" className="btn btn--ghost" onClick={resetForm}>
+                    Thêm tài khoản khác
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={() => navigate('/sessions')}
+                  >
+                    Xem Sessions
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   )
 }
@@ -84,389 +395,6 @@ function AuthStepper({
         </li>
       ))}
     </ol>
-  )
-}
-
-function LoginFlow() {
-  const navigate = useNavigate()
-  const [step, setStep] = useState<LoginStep>('phone')
-  const [phone, setPhone] = useState('')
-  const [code, setCode] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
-  const [skipped2fa, setSkipped2fa] = useState(false)
-  const [accountInfo, setAccountInfo] = useState({
-    first_name: '',
-    last_name: '',
-    username: '',
-    session_file: '',
-  })
-
-  const stepIndex =
-    step === 'phone' ? 0 : step === 'code' ? 1 : step === '2fa' ? 2 : 3
-
-  async function handleSendCode(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    setSuccess('')
-    try {
-      const res = await api.sendCode(phone.trim())
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Gửi mã thất bại')
-        return
-      }
-      if (res.data.status === 'error' || res.data.status === 'info') {
-        setError(res.data.message)
-        return
-      }
-      setSuccess(res.data.message)
-      setStep('code')
-    } catch {
-      setError('Không kết nối được API. Kiểm tra backend đang chạy port 8001.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    setSuccess('')
-    try {
-      const res = await api.login(phone.trim(), code.trim(), password || undefined)
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Đăng nhập thất bại')
-        return
-      }
-      if (res.data.status === 'need_2fa') {
-        setSkipped2fa(false)
-        setSuccess(res.data.message)
-        setStep('2fa')
-        return
-      }
-      if (res.data.status === 'error') {
-        setError(res.data.message)
-        return
-      }
-      setSkipped2fa(true)
-      setAccountInfo({
-        first_name: res.data.first_name,
-        last_name: res.data.last_name,
-        username: res.data.username,
-        session_file: res.data.session_file,
-      })
-      setSuccess(res.data.message)
-      setStep('done')
-    } catch {
-      setError('Không kết nối được API khi đăng nhập.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function resetForm() {
-    setStep('phone')
-    setPhone('')
-    setCode('')
-    setPassword('')
-    setSkipped2fa(false)
-    setError('')
-    setSuccess('')
-    setAccountInfo({ first_name: '', last_name: '', username: '', session_file: '' })
-  }
-
-  return (
-    <div className="auth-flow">
-      <AuthStepper
-        steps={LOGIN_STEPS}
-        currentIndex={stepIndex}
-        skippedIndex={skipped2fa ? LOGIN_2FA_STEP_INDEX : undefined}
-      />
-
-      <div className="auth-body">
-        <Alert type="error" message={error} />
-        <Alert type="success" message={success} />
-
-        <section className="panel auth-form-panel">
-        {step === 'phone' && (
-          <form onSubmit={(e) => void handleSendCode(e)}>
-            <h2>Gửi mã OTP</h2>
-            <p className="form-meta">Số điện thoại đã có tài khoản Telegram</p>
-            <label className="field">
-              <span>Số điện thoại (E.164)</span>
-              <input
-                type="tel"
-                placeholder="+84901234567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-                autoFocus
-              />
-            </label>
-            <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
-              {loading ? 'Đang gửi…' : 'Gửi mã OTP'}
-            </button>
-          </form>
-        )}
-
-        {step === 'code' && (
-          <form onSubmit={(e) => void handleLogin(e)}>
-            <h2>Nhập mã OTP</h2>
-            <p className="form-meta">
-              Mã đã gửi tới <strong>{phone}</strong>
-            </p>
-            <label className="field">
-              <span>Mã xác thực</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="12345"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                required
-                autoFocus
-              />
-            </label>
-            <div className="form-actions">
-              <button type="button" className="btn btn--ghost" onClick={() => setStep('phone')}>
-                Quay lại
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={loading}>
-                {loading ? 'Đang xác thực…' : 'Đăng nhập'}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {step === '2fa' && (
-          <form onSubmit={(e) => void handleLogin(e)}>
-            <h2>Bước 3 — Mật khẩu 2FA</h2>
-            <p className="form-meta">
-              Tài khoản <strong>{phone}</strong> bật xác thực 2 bước — nhập mật khẩu Cloud Password
-            </p>
-            <label className="field">
-              <span>Mật khẩu 2FA</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoFocus
-              />
-            </label>
-            <div className="form-actions">
-              <button type="button" className="btn btn--ghost" onClick={() => setStep('code')}>
-                Quay lại
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={loading}>
-                {loading ? 'Đang xác thực…' : 'Xác nhận 2FA'}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {step === 'done' && (
-          <div className="done-panel">
-            <div className="done-icon">✓</div>
-            <h2>Đăng nhập thành công</h2>
-            <AccountDetails phone={phone} accountInfo={accountInfo} />
-            <div className="form-actions">
-              <button type="button" className="btn btn--ghost" onClick={resetForm}>
-                Thêm tài khoản khác
-              </button>
-              <button type="button" className="btn btn--primary" onClick={() => navigate('/sessions')}>
-                Xem Sessions
-              </button>
-            </div>
-          </div>
-        )}
-        </section>
-      </div>
-    </div>
-  )
-}
-
-function RegisterFlow() {
-  const navigate = useNavigate()
-  const [step, setStep] = useState<RegisterStep>('phone')
-  const [phone, setPhone] = useState('')
-  const [code, setCode] = useState('')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
-  const [accountInfo, setAccountInfo] = useState({
-    first_name: '',
-    last_name: '',
-    username: '',
-    session_file: '',
-  })
-
-  const stepIndex = step === 'phone' ? 0 : step === 'profile' ? 1 : 2
-
-  async function handleSendCode(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    setSuccess('')
-    try {
-      const res = await api.sendCode(phone.trim())
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Gửi mã thất bại')
-        return
-      }
-      if (res.data.status === 'error' || res.data.status === 'info') {
-        setError(res.data.message)
-        return
-      }
-      setSuccess(res.data.message)
-      setStep('profile')
-    } catch {
-      setError('Không kết nối được API. Kiểm tra backend đang chạy port 8001.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleRegister(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    setSuccess('')
-    try {
-      const res = await api.register(phone.trim(), code.trim(), firstName.trim(), lastName.trim())
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Đăng ký thất bại')
-        return
-      }
-      if (res.data.status === 'error') {
-        setError(res.data.message)
-        return
-      }
-      setAccountInfo({
-        first_name: res.data.first_name,
-        last_name: res.data.last_name,
-        username: res.data.username,
-        session_file: res.data.session_file,
-      })
-      setSuccess(res.data.message)
-      setStep('done')
-    } catch {
-      setError('Không kết nối được API khi đăng ký.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function resetForm() {
-    setStep('phone')
-    setPhone('')
-    setCode('')
-    setFirstName('')
-    setLastName('')
-    setError('')
-    setSuccess('')
-    setAccountInfo({ first_name: '', last_name: '', username: '', session_file: '' })
-  }
-
-  return (
-    <div className="auth-flow">
-      <AuthStepper steps={REGISTER_STEPS} currentIndex={stepIndex} />
-
-      <div className="auth-body">
-        <Alert type="error" message={error} />
-        <Alert type="success" message={success} />
-
-        <section className="panel auth-form-panel">
-        {step === 'phone' && (
-          <form onSubmit={(e) => void handleSendCode(e)}>
-            <h2>Gửi mã OTP</h2>
-            <p className="form-meta">Số điện thoại chưa có tài khoản Telegram</p>
-            <label className="field">
-              <span>Số điện thoại (E.164)</span>
-              <input
-                type="tel"
-                placeholder="+84901234567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-                autoFocus
-              />
-            </label>
-            <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
-              {loading ? 'Đang gửi…' : 'Gửi mã OTP'}
-            </button>
-          </form>
-        )}
-
-        {step === 'profile' && (
-          <form onSubmit={(e) => void handleRegister(e)}>
-            <h2>Thông tin đăng ký</h2>
-            <p className="form-meta">
-              OTP đã gửi tới <strong>{phone}</strong>
-            </p>
-            <label className="field">
-              <span>Mã OTP</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                required
-                autoFocus
-              />
-            </label>
-            <label className="field">
-              <span>Tên</span>
-              <input
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                required
-              />
-            </label>
-            <label className="field">
-              <span>Họ (tuỳ chọn)</span>
-              <input
-                type="text"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-              />
-            </label>
-            <div className="form-actions">
-              <button type="button" className="btn btn--ghost" onClick={() => setStep('phone')}>
-                Quay lại
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={loading}>
-                {loading ? 'Đang đăng ký…' : 'Đăng ký'}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {step === 'done' && (
-          <div className="done-panel">
-            <div className="done-icon">✓</div>
-            <h2>Đăng ký thành công</h2>
-            <AccountDetails phone={phone} accountInfo={accountInfo} />
-            <div className="form-actions">
-              <button type="button" className="btn btn--ghost" onClick={resetForm}>
-                Đăng ký số khác
-              </button>
-              <button type="button" className="btn btn--primary" onClick={() => navigate('/sessions')}>
-                Xem Sessions
-              </button>
-            </div>
-          </div>
-        )}
-        </section>
-      </div>
-    </div>
   )
 }
 

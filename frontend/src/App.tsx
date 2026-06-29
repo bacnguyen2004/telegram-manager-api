@@ -23,7 +23,7 @@ function App() {
             <Route path="auth" element={<AuthPage />} />
             <Route path="security" element={<SecurityPage />} />
             <Route path="login" element={<Navigate to="/auth" replace />} />
-            <Route path="register" element={<Navigate to="/auth?mode=register" replace />} />
+            <Route path="register" element={<Navigate to="/auth" replace />} />
             <Route path="send-code" element={<Navigate to="/auth" replace />} />
             <Route path="login-code" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />

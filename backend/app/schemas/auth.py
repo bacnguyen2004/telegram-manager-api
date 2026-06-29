@@ -23,7 +23,7 @@ class LoginRequest(BaseModel):
 
 
 class LoginData(BaseModel):
-    status: Literal["success", "need_2fa", "error"]
+    status: Literal["success", "need_2fa", "need_signup", "error"]
     message: str
     phone: str
     first_name: str = ""

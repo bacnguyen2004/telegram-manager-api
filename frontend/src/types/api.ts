@@ -27,7 +27,7 @@ export interface SendCodeData {
 }
 
 export interface LoginData {
-  status: 'success' | 'need_2fa' | 'error'
+  status: 'success' | 'need_2fa' | 'need_signup' | 'error'
   message: string
   phone: string
   first_name: string
