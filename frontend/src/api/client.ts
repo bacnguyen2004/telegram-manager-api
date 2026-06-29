@@ -196,11 +196,17 @@ export const api = {
     )
   },
 
-  getDialogMessages(phone: string, peerId: string, limit = 40) {
+  getDialogMessages(
+    phone: string,
+    peerId: string,
+    limit = 40,
+    offsetId = 0,
+  ) {
     const params = new URLSearchParams({
       peer_id: peerId,
       limit: String(limit),
     })
+    if (offsetId > 0) params.set('offset_id', String(offsetId))
     return request<DialogMessagesData>(
       `/dialogs/${encodeURIComponent(phone)}/messages?${params}`,
     )

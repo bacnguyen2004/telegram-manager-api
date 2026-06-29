@@ -125,10 +125,12 @@ class TelegramDialogService:
         phone: str,
         peer_id: str,
         limit: int = 40,
+        offset_id: int = 0,
     ) -> dict:
         phone = phone.strip()
         peer_ref = str(peer_id or "").strip()
         limit = max(1, min(int(limit or 40), 100))
+        offset_id = max(0, int(offset_id or 0))
 
         if not phone:
             return self._messages_error(phone, peer_ref, "Thieu phone")
@@ -160,33 +162,20 @@ class TelegramDialogService:
                     )
 
                 entity = await self._resolve_peer(client, peer_ref)
-                messages = await client.get_messages(entity, limit=limit)
+                fetch_kwargs: dict = {"limit": limit}
+                if offset_id > 0:
+                    fetch_kwargs["offset_id"] = offset_id
+                messages = await client.get_messages(entity, **fetch_kwargs)
                 me = await client.get_me()
                 me_id = getattr(me, "id", None)
+                sender_names = await self._resolve_sender_names(client, messages)
 
                 rows: list[dict] = []
                 for message in reversed(messages):
-                    sender_id = None
-                    from_id = getattr(message, "from_id", None)
-                    if from_id is not None:
-                        sender_id = getattr(from_id, "user_id", None) or getattr(
-                            from_id, "channel_id", None
-                        )
-
-                    sender_name = ""
-                    if sender_id:
-                        try:
-                            sender = await message.get_sender()
-                            sender_name = " ".join(
-                                part
-                                for part in [
-                                    getattr(sender, "first_name", "") or "",
-                                    getattr(sender, "last_name", "") or "",
-                                ]
-                                if part
-                            ).strip() or getattr(sender, "username", "") or str(sender_id)
-                        except Exception:
-                            sender_name = str(sender_id)
+                    sender_id = self._extract_sender_id(message)
+                    sender_name = (
+                        sender_names.get(sender_id, "") if sender_id else ""
+                    )
 
                     content_type = self._message_content_type(message)
                     has_photo = self._has_displayable_photo(message)
@@ -225,6 +214,7 @@ class TelegramDialogService:
                     "title": str(title),
                     "messages": rows,
                     "total": len(rows),
+                    "has_more_older": len(messages) >= limit,
                     "message": "OK",
                 }
         except FloodWaitError as exc:
@@ -278,14 +268,24 @@ class TelegramDialogService:
                     max_id = int(getattr(latest[0], "id", 0) or 0) if latest else 0
 
                 if max_id > 0:
-                    await client.send_read_acknowledge(entity, max_id=max_id)
+                    message = await client.get_messages(entity, ids=max_id)
+                    if message:
+                        await client.send_read_acknowledge(entity, message=message)
+                    else:
+                        await client.send_read_acknowledge(entity, max_id=max_id)
+
+                read_max_id, unread_count = await self._read_dialog_inbox_state(
+                    client,
+                    entity,
+                    fallback_read_max_id=max_id,
+                )
 
                 return {
                     "status": "success",
                     "phone": phone,
                     "peer_id": peer_ref,
-                    "read_inbox_max_id": max_id,
-                    "unread_count": 0,
+                    "read_inbox_max_id": read_max_id,
+                    "unread_count": unread_count,
                     "message": "OK",
                 }
         except FloodWaitError as exc:
@@ -348,6 +348,93 @@ class TelegramDialogService:
             return self._photo_error(f"Flood wait {exc.seconds}s")
         except Exception as exc:
             return self._photo_error(str(exc))
+
+    async def _read_dialog_inbox_state(
+        self,
+        client: TelegramClient,
+        entity,
+        *,
+        fallback_read_max_id: int = 0,
+    ) -> tuple[int, int]:
+        dialogs = await client.get_dialogs(limit=1, offset_peer=entity)
+        if not dialogs:
+            return fallback_read_max_id, 0
+
+        dialog = dialogs[0]
+        unread_count = int(getattr(dialog, "unread_count", 0) or 0)
+        inner_dialog = getattr(dialog, "dialog", None)
+        read_max_id = (
+            int(getattr(inner_dialog, "read_inbox_max_id", 0) or 0)
+            if inner_dialog is not None
+            else fallback_read_max_id
+        )
+        return read_max_id or fallback_read_max_id, unread_count
+
+    @staticmethod
+    def _extract_sender_id(message) -> int | None:
+        from_id = getattr(message, "from_id", None)
+        if from_id is None:
+            return None
+        sender_id = getattr(from_id, "user_id", None) or getattr(
+            from_id,
+            "channel_id",
+            None,
+        )
+        return int(sender_id) if sender_id else None
+
+    @staticmethod
+    def _format_entity_name(entity) -> str:
+        title = getattr(entity, "title", None)
+        if title:
+            return str(title).strip()
+        name = " ".join(
+            part
+            for part in [
+                getattr(entity, "first_name", "") or "",
+                getattr(entity, "last_name", "") or "",
+            ]
+            if part
+        ).strip()
+        username = getattr(entity, "username", "") or ""
+        entity_id = getattr(entity, "id", "")
+        return name or username or str(entity_id)
+
+    async def _resolve_sender_names(
+        self,
+        client: TelegramClient,
+        messages: list,
+    ) -> dict[int, str]:
+        cache: dict[int, str] = {}
+        missing_ids: set[int] = set()
+
+        for message in messages:
+            if getattr(message, "out", False):
+                continue
+            sender_id = self._extract_sender_id(message)
+            if not sender_id:
+                continue
+
+            sender = getattr(message, "sender", None)
+            if sender is not None:
+                cache[sender_id] = self._format_entity_name(sender)
+                continue
+
+            missing_ids.add(sender_id)
+
+        if missing_ids:
+            entities = await client.get_entities(list(missing_ids))
+            if not isinstance(entities, list):
+                entities = [entities]
+            for entity in entities:
+                if entity is not None:
+                    entity_id = getattr(entity, "id", None)
+                    if entity_id is not None:
+                        cache[int(entity_id)] = self._format_entity_name(entity)
+
+        for sender_id in missing_ids:
+            cache.setdefault(sender_id, str(sender_id))
+
+        return cache
 
     async def _resolve_peer(self, client: TelegramClient, peer_ref: str):
         if peer_ref.lstrip("-").isdigit():
@@ -422,6 +509,7 @@ class TelegramDialogService:
             "title": "",
             "total": 0,
             "messages": [],
+            "has_more_older": False,
             "message": message,
         }
 

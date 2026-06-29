@@ -37,8 +37,18 @@ async def get_dialog_messages(
     phone: str,
     peer_id: str = Query(..., description="Dialog id hoac username"),
     limit: int = Query(default=40, ge=1, le=100),
+    offset_id: int = Query(
+        default=0,
+        ge=0,
+        description="Lay tin cu hon message id nay (0 = moi nhat)",
+    ),
 ) -> dict:
-    result = await telegram_dialog_service.get_messages(phone, peer_id, limit)
+    result = await telegram_dialog_service.get_messages(
+        phone,
+        peer_id,
+        limit,
+        offset_id,
+    )
     data = DialogMessagesData(**result)
     return success_response(data.model_dump())
 

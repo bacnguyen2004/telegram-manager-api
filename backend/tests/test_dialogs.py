@@ -65,3 +65,43 @@ async def test_mark_dialog_read_success(client, monkeypatch):
     assert body["data"]["status"] == "success"
     assert body["data"]["read_inbox_max_id"] == 999
     assert body["data"]["unread_count"] == 0
+
+
+async def test_get_messages_with_offset_id(client, monkeypatch):
+    captured: dict = {}
+
+    async def mock_get_messages(
+        phone: str,
+        peer_id: str,
+        limit: int = 40,
+        offset_id: int = 0,
+    ):
+        captured["offset_id"] = offset_id
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "title": "Test Chat",
+            "messages": [{"id": 10, "date": "", "sender_id": "", "sender_name": "",
+                         "outgoing": False, "content_type": "text", "has_media": False,
+                         "has_photo": False, "text": "hi"}],
+            "total": 1,
+            "has_more_older": False,
+            "message": "OK",
+        }
+
+    monkeypatch.setattr(
+        dialogs.telegram_dialog_service,
+        "get_messages",
+        mock_get_messages,
+    )
+
+    response = client.get(
+        "/api/dialogs/%2B84901234567/messages?peer_id=123456789&limit=50&offset_id=99",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert captured["offset_id"] == 99
+    assert body["data"]["has_more_older"] is False

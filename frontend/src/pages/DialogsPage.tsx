@@ -50,6 +50,71 @@ function countChipClass(kind: keyof DialogCounts | 'all'): string {
   return map[kind] ?? 'chip'
 }
 
+function inferHasMoreOlder(
+  messageCount: number,
+  limit: number,
+  apiValue?: boolean,
+): boolean {
+  if (typeof apiValue === 'boolean') return apiValue
+  return messageCount >= limit
+}
+
+const DIALOG_READ_STORAGE_KEY = 'telegram-manager-dialog-read-v1'
+
+type StoredDialogRead = {
+  readMaxId: number
+  at: number
+}
+
+function loadReadStateMap(phone: string): Record<string, StoredDialogRead> {
+  try {
+    const raw = localStorage.getItem(DIALOG_READ_STORAGE_KEY)
+    if (!raw) return {}
+    const all = JSON.parse(raw) as Record<string, Record<string, StoredDialogRead>>
+    return all[phone] ?? {}
+  } catch {
+    return {}
+  }
+}
+
+function saveReadState(phone: string, dialogId: string, readMaxId: number) {
+  if (!phone || !dialogId || readMaxId <= 0) return
+  try {
+    const raw = localStorage.getItem(DIALOG_READ_STORAGE_KEY)
+    const all = raw
+      ? (JSON.parse(raw) as Record<string, Record<string, StoredDialogRead>>)
+      : {}
+    all[phone] = all[phone] ?? {}
+    all[phone][dialogId] = { readMaxId, at: Date.now() }
+    localStorage.setItem(DIALOG_READ_STORAGE_KEY, JSON.stringify(all))
+  } catch {
+    // Bỏ qua nếu localStorage không khả dụng
+  }
+}
+
+function mergeDialogsWithReadState(phone: string, dialogs: DialogItem[]): DialogItem[] {
+  const stored = loadReadStateMap(phone)
+  return dialogs.map((dialog) => {
+    const local = stored[dialog.id]
+    if (!local) return dialog
+
+    const serverReadMax = dialog.read_inbox_max_id ?? 0
+    const serverLastId = Number(dialog.last_message_id) || 0
+    const caughtUp =
+      local.readMaxId >= serverReadMax &&
+      (serverLastId <= 0 || local.readMaxId >= serverLastId)
+
+    if (caughtUp) {
+      return {
+        ...dialog,
+        unread_count: 0,
+        read_inbox_max_id: Math.max(serverReadMax, local.readMaxId),
+      }
+    }
+    return dialog
+  })
+}
+
 function ChatEmptyIcon() {
   return (
     <svg className="chat-empty-icon" viewBox="0 0 80 80" fill="none" aria-hidden>
@@ -77,6 +142,8 @@ export function DialogsPage() {
   const [replyTo, setReplyTo] = useState<DialogMessageItem | null>(null)
   const [loadingDialogs, setLoadingDialogs] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasMoreOlder, setHasMoreOlder] = useState(false)
   const [sending, setSending] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
@@ -93,10 +160,17 @@ export function DialogsPage() {
   const markReadTimerRef = useRef<number | null>(null)
   const markPartialTimerRef = useRef<number | null>(null)
   const markingReadRef = useRef(false)
+  const loadingOlderRef = useRef(false)
+  const selectedDialogIdRef = useRef<string | null>(null)
+  const messagesRequestSeqRef = useRef(0)
   const [showJumpBtn, setShowJumpBtn] = useState(false)
   const [pendingUnread, setPendingUnread] = useState(0)
+  const [loadedPhotoIds, setLoadedPhotoIds] = useState<Set<number>>(() => new Set())
 
   const SCROLL_BOTTOM_THRESHOLD = 56
+  const SCROLL_TOP_THRESHOLD = 72
+  const MESSAGES_INITIAL_LIMIT = 100
+  const MESSAGES_OLDER_LIMIT = 50
 
   const filterCounts = useMemo(() => {
     const tallies: Record<KindFilter, number> = {
@@ -245,9 +319,43 @@ export function DialogsPage() {
       setDialogs((prev) => prev.map(patch))
       setSelected((prev) => (prev?.id === dialogId ? patch(prev) : prev))
       openingReadMaxIdRef.current = readMaxId
-      if (unreadCount <= 0) openingUnreadRef.current = 0
+      if (unreadCount <= 0) {
+        openingUnreadRef.current = 0
+        if (phone) saveReadState(phone, dialogId, readMaxId)
+      }
     },
-    [],
+    [phone],
+  )
+
+  const commitMarkRead = useCallback(
+    async (dialogId: string, maxId: number) => {
+      if (!phone || !dialogId || maxId <= 0) return
+
+      if (markPartialTimerRef.current) {
+        window.clearTimeout(markPartialTimerRef.current)
+        markPartialTimerRef.current = null
+      }
+      if (markReadTimerRef.current) {
+        window.clearTimeout(markReadTimerRef.current)
+        markReadTimerRef.current = null
+      }
+
+      applyDialogReadState(dialogId, maxId, 0)
+      setPendingUnread(0)
+
+      try {
+        const res = await api.markDialogRead(phone, dialogId, maxId)
+        if (!res.success || !res.data || res.data.status === 'error') return
+
+        const readMaxId = res.data.read_inbox_max_id || maxId
+        const unreadCount = res.data.unread_count ?? 0
+        applyDialogReadState(dialogId, readMaxId, unreadCount)
+        if (unreadCount <= 0) saveReadState(phone, dialogId, readMaxId)
+      } catch {
+        // UI đã optimistic; localStorage vẫn giữ trạng thái đã đọc
+      }
+    },
+    [phone, applyDialogReadState],
   )
 
   const getScrollUnreadState = useCallback(() => {
@@ -290,35 +398,20 @@ export function DialogsPage() {
 
   const markAsRead = useCallback(
     async (maxId?: number) => {
-      if (!phone || !selected || markingReadRef.current) return
+      const dialogId = selectedDialogIdRef.current
+      if (!phone || !dialogId) return
 
       const latestId = messages[messages.length - 1]?.id
       if (!latestId) return
 
       const targetId = maxId && maxId > 0 ? maxId : latestId
-      const unread = selected.unread_count ?? 0
-      const readMaxId = selected.read_inbox_max_id ?? 0
+      const unread = selected?.unread_count ?? openingUnreadRef.current
+      const readMaxId = selected?.read_inbox_max_id ?? openingReadMaxIdRef.current
       if (unread <= 0 && readMaxId >= targetId) return
 
-      applyDialogReadState(selected.id, targetId, 0)
-      setPendingUnread(0)
-
-      markingReadRef.current = true
-      try {
-        const res = await api.markDialogRead(phone, selected.id, targetId)
-        if (!res.success || !res.data || res.data.status === 'error') return
-        applyDialogReadState(
-          selected.id,
-          res.data.read_inbox_max_id || targetId,
-          res.data.unread_count ?? 0,
-        )
-      } catch {
-        // UI đã cập nhật optimistic; lần sau có thể chưa đồng bộ Telegram
-      } finally {
-        markingReadRef.current = false
-      }
+      await commitMarkRead(dialogId, targetId)
     },
-    [phone, selected, messages, applyDialogReadState],
+    [phone, selected, messages, commitMarkRead],
   )
 
   const markPartialReadDebounced = useCallback(
@@ -394,6 +487,114 @@ export function DialogsPage() {
     getScrollUnreadState,
     markAsReadDebounced,
     markPartialReadDebounced,
+  ])
+
+  const isStaleMessagesRequest = useCallback(
+    (requestSeq: number, dialogId: string) =>
+      requestSeq !== messagesRequestSeqRef.current ||
+      dialogId !== selectedDialogIdRef.current,
+    [],
+  )
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!phone || !selected || messages.length === 0 || !hasMoreOlder) return
+    if (loadingOlderRef.current || loadingMessages) return
+
+    const dialogId = selected.id
+    const requestSeq = messagesRequestSeqRef.current
+    const offsetId = messages[0]?.id
+    if (!offsetId) return
+
+    const container = messagesScrollRef.current
+    const prevScrollHeight = container?.scrollHeight ?? 0
+    const prevScrollTop = container?.scrollTop ?? 0
+
+    loadingOlderRef.current = true
+    setLoadingOlder(true)
+    try {
+      const res = await api.getDialogMessages(
+        phone,
+        dialogId,
+        MESSAGES_OLDER_LIMIT,
+        offsetId,
+      )
+      if (isStaleMessagesRequest(requestSeq, dialogId)) return
+
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Không tải được tin cũ hơn')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+
+      const older = res.data.messages
+      if (older.length === 0) {
+        setHasMoreOlder(false)
+        return
+      }
+
+      setHasMoreOlder(
+        inferHasMoreOlder(
+          older.length,
+          MESSAGES_OLDER_LIMIT,
+          res.data.has_more_older,
+        ),
+      )
+
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((msg) => msg.id))
+        const uniqueOlder = older.filter((msg) => !existingIds.has(msg.id))
+        return [...uniqueOlder, ...prev]
+      })
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!container || isStaleMessagesRequest(requestSeq, dialogId)) return
+          container.scrollTop =
+            prevScrollTop + (container.scrollHeight - prevScrollHeight)
+        })
+      })
+    } catch (err) {
+      if (!isStaleMessagesRequest(requestSeq, dialogId)) {
+        setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+      }
+    } finally {
+      if (!isStaleMessagesRequest(requestSeq, dialogId)) {
+        setLoadingOlder(false)
+        loadingOlderRef.current = false
+      }
+    }
+  }, [
+    phone,
+    selected,
+    messages,
+    hasMoreOlder,
+    loadingMessages,
+    isStaleMessagesRequest,
+  ])
+
+  const handleMessagesScroll = useCallback(() => {
+    updateJumpButton()
+
+    const container = messagesScrollRef.current
+    if (
+      !container ||
+      loadingOlderRef.current ||
+      loadingMessages ||
+      !hasMoreOlder ||
+      !selected
+    ) {
+      return
+    }
+    if (container.scrollTop > SCROLL_TOP_THRESHOLD) return
+    void loadOlderMessages()
+  }, [
+    updateJumpButton,
+    loadingMessages,
+    hasMoreOlder,
+    selected,
+    loadOlderMessages,
   ])
 
   const handleJumpToLatest = () => {
@@ -477,9 +678,12 @@ export function DialogsPage() {
     setDialogs([])
     setCounts(null)
     setSelected(null)
+    selectedDialogIdRef.current = null
+    messagesRequestSeqRef.current += 1
     setMessages([])
     setMessagesTitle('')
     setReplyTo(null)
+    setLoadedPhotoIds(new Set())
     try {
       const res = await api.listDialogs(phone)
       if (!res.success || !res.data) {
@@ -490,7 +694,7 @@ export function DialogsPage() {
         setError(res.data.message)
         return
       }
-      setDialogs(res.data.dialogs)
+      setDialogs(mergeDialogsWithReadState(phone, res.data.dialogs))
       setCounts(res.data.counts)
       setSuccess(`Tải ${res.data.total} chat`)
     } catch (err) {
@@ -502,12 +706,25 @@ export function DialogsPage() {
 
   async function loadMessages(dialog: DialogItem, showLoading = true) {
     if (!phone) return false
+
+    const dialogId = dialog.id
+    const requestSeq = messagesRequestSeqRef.current
+
     if (showLoading) {
       setLoadingMessages(true)
       setMessages([])
+      setHasMoreOlder(false)
     }
     try {
-      const res = await api.getDialogMessages(phone, dialog.id, 100)
+      const res = await api.getDialogMessages(
+        phone,
+        dialogId,
+        MESSAGES_INITIAL_LIMIT,
+      )
+      if (requestSeq !== messagesRequestSeqRef.current || dialogId !== selectedDialogIdRef.current) {
+        return false
+      }
+
       if (!res.success || !res.data) {
         setError(res.error ?? 'Không tải được tin nhắn')
         return false
@@ -517,31 +734,72 @@ export function DialogsPage() {
         return false
       }
       setMessages(res.data.messages)
+      setHasMoreOlder(
+        inferHasMoreOlder(
+          res.data.messages.length,
+          MESSAGES_INITIAL_LIMIT,
+          res.data.has_more_older,
+        ),
+      )
       setMessagesTitle(res.data.title || dialog.title)
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+      if (requestSeq === messagesRequestSeqRef.current && dialogId === selectedDialogIdRef.current) {
+        setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+      }
       return false
     } finally {
-      if (showLoading) setLoadingMessages(false)
+      if (
+        showLoading &&
+        requestSeq === messagesRequestSeqRef.current &&
+        dialogId === selectedDialogIdRef.current
+      ) {
+        setLoadingMessages(false)
+      }
     }
   }
 
   async function handleSelectDialog(dialog: DialogItem) {
+    const prevDialogId = selectedDialogIdRef.current
+    const prevLatestId = messages[messages.length - 1]?.id ?? 0
+    const prevHadUnread =
+      (selected?.unread_count ?? 0) > 0 || openingUnreadRef.current > 0
+
+    if (
+      phone &&
+      prevDialogId &&
+      prevDialogId !== dialog.id &&
+      prevLatestId > 0 &&
+      prevHadUnread &&
+      pendingUnread <= 0
+    ) {
+      void commitMarkRead(prevDialogId, prevLatestId)
+    }
+
     const fresh = dialogs.find((item) => item.id === dialog.id) ?? dialog
+    selectedDialogIdRef.current = fresh.id
+    messagesRequestSeqRef.current += 1
     setSelected(fresh)
     setDraftText('')
     setReplyTo(null)
     clearSelectedImage()
     resetAlerts()
     setShowJumpBtn(false)
+    setHasMoreOlder(false)
+    setLoadingOlder(false)
+    loadingOlderRef.current = false
     openingUnreadRef.current = fresh.unread_count
     openingReadMaxIdRef.current = fresh.read_inbox_max_id ?? 0
     setPendingUnread(fresh.unread_count)
-    scrollIntentRef.current = 'last-read'
+    scrollIntentRef.current = fresh.unread_count > 0 ? 'last-read' : 'latest'
     setMessagesTitle(fresh.title)
     messageRefs.current.clear()
+    setLoadedPhotoIds(new Set())
     await loadMessages(fresh)
+  }
+
+  function revealPhoto(messageId: number) {
+    setLoadedPhotoIds((prev) => new Set(prev).add(messageId))
   }
 
   async function handleDeleteMessage(msg: DialogMessageItem) {
@@ -790,6 +1048,12 @@ export function DialogsPage() {
                     {selected.username && (
                       <span className="chat-header-username">@{selected.username}</span>
                     )}
+                    {!loadingMessages && messages.length > 0 && (
+                      <span className="chat-header-count">
+                        {messages.length} tin
+                        {hasMoreOlder ? ' · còn tin cũ hơn' : ''}
+                      </span>
+                    )}
                   </p>
                 </div>
                 {selected.link && (
@@ -834,10 +1098,35 @@ export function DialogsPage() {
 
               {selected && !loadingMessages && messages.length > 0 && (
                 <>
+                  {hasMoreOlder && (
+                    <button
+                      type="button"
+                      className="chat-load-older-fab"
+                      onClick={() => void loadOlderMessages()}
+                      disabled={loadingOlder}
+                      title="Tải tin nhắn cũ hơn"
+                      aria-label="Tải tin nhắn cũ hơn"
+                    >
+                      {loadingOlder ? (
+                        <span className="spinner spinner--accent" aria-hidden />
+                      ) : (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+                          <path
+                            d="M12 19V5m0 0-6 6m6-6 6 6"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                      <span>{loadingOlder ? 'Đang tải…' : 'Tải tin cũ hơn'}</span>
+                    </button>
+                  )}
                   <div
                     ref={messagesScrollRef}
                     className="chat-messages-area"
-                    onScroll={updateJumpButton}
+                    onScroll={handleMessagesScroll}
                   >
                     <ul className="messages-list">
                     {messages.map((msg) => {
@@ -872,15 +1161,35 @@ export function DialogsPage() {
                               <span className="message-date">{msg.date}</span>
                             </div>
                             {isPhoto && selected && (
-                              <img
-                                className="message-photo"
-                                src={api.messagePhotoUrl(phone, selected.id, msg.id)}
-                                alt="Ảnh"
-                                loading="lazy"
-                                onLoad={() => {
-                                  if (isAtBottom()) scrollToLatest('auto')
-                                }}
-                              />
+                              loadedPhotoIds.has(msg.id) ? (
+                                <img
+                                  className="message-photo"
+                                  src={api.messagePhotoUrl(phone, selected.id, msg.id)}
+                                  alt="Ảnh"
+                                  onLoad={() => {
+                                    if (isAtBottom()) scrollToLatest('auto')
+                                  }}
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="message-photo-trigger"
+                                  onClick={() => revealPhoto(msg.id)}
+                                >
+                                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+                                    <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.8" />
+                                    <circle cx="9" cy="10" r="1.5" fill="currentColor" />
+                                    <path
+                                      d="M4 16l4.5-4.5 3 3 5-5 3.5 3.5"
+                                      stroke="currentColor"
+                                      strokeWidth="1.8"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                  <span>Xem ảnh</span>
+                                </button>
+                              )
                             )}
                             {displayText ? (
                               <MessageText text={displayText} />

@@ -201,6 +201,7 @@ export interface DialogMessagesData {
   title: string
   total: number
   messages: DialogMessageItem[]
+  has_more_older: boolean
   message: string
 }
 

@@ -58,6 +58,7 @@ class DialogMessagesData(BaseModel):
     title: str
     total: int
     messages: list[DialogMessageItem]
+    has_more_older: bool = False
     message: str = ""
 
 
