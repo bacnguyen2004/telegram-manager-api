@@ -108,6 +108,33 @@ async def test_reply_message_success(client, monkeypatch):
     assert data["message_id"] == 99
 
 
+async def test_delete_message_success(client, monkeypatch):
+    async def mock_delete_message(phone: str, peer_id: str, message_id: int) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": message_id,
+            "reply_to_msg_id": None,
+            "message": "Da xoa tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "delete_message",
+        mock_delete_message,
+    )
+
+    response = client.delete(
+        "/api/messages/55?phone=%2B84901234567&peer_id=123456789",
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["message_id"] == 55
+
+
 def test_send_message_validation_empty_text(client):
     response = client.post(
         "/api/messages/send",

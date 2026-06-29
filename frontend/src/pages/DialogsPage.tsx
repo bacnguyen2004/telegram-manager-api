@@ -41,6 +41,7 @@ export function DialogsPage() {
   const [loadingDialogs, setLoadingDialogs] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -126,6 +127,33 @@ export function DialogsPage() {
     resetAlerts()
     setMessagesTitle(dialog.title)
     await loadMessages(dialog)
+  }
+
+  async function handleDeleteMessage(msg: DialogMessageItem) {
+    if (!phone || !selected) return
+    const confirmed = window.confirm(`Xóa tin nhắn #${msg.id}?`)
+    if (!confirmed) return
+
+    setDeletingId(msg.id)
+    resetAlerts()
+    try {
+      const res = await api.deleteMessage(phone, selected.id, msg.id)
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Xóa tin thất bại')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      if (replyTo?.id === msg.id) setReplyTo(null)
+      setSuccess(res.data.message)
+      await loadMessages(selected, false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   async function handleSendMessage(e: React.FormEvent) {
@@ -352,6 +380,16 @@ export function DialogsPage() {
                         >
                           Reply
                         </button>
+                        {msg.outgoing && (
+                          <button
+                            type="button"
+                            className="btn btn--sm btn--danger message-reply-btn"
+                            disabled={deletingId === msg.id || sending}
+                            onClick={() => void handleDeleteMessage(msg)}
+                          >
+                            {deletingId === msg.id ? '…' : 'Xóa'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </li>

@@ -1,4 +1,6 @@
 backend/.env
+frontend/.env
+frontend/.env.local
 backend/venv/
 backend/runtime/
 frontend/node_modules/

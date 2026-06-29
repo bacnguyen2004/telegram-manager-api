@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from ..schemas.common import ApiEnvelope
 from ..schemas.messages import (
@@ -32,5 +32,16 @@ async def reply_message(payload: ReplyMessageRequest) -> dict:
         payload.text,
         payload.reply_to_msg_id,
     )
+    data = SendMessageData(**result)
+    return success_response(data.model_dump())
+
+
+@router.delete("/{message_id}", response_model=ApiEnvelope[SendMessageData])
+async def delete_message(
+    message_id: int,
+    phone: str = Query(..., description="So dien thoai session"),
+    peer_id: str = Query(..., description="Dialog id hoac username"),
+) -> dict:
+    result = await telegram_message_service.delete_message(phone, peer_id, message_id)
     data = SendMessageData(**result)
     return success_response(data.model_dump())

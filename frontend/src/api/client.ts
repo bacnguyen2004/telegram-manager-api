@@ -202,4 +202,15 @@ export const api = {
       }),
     })
   },
+
+  deleteMessage(phone: string, peerId: string, messageId: number) {
+    const params = new URLSearchParams({
+      phone,
+      peer_id: peerId,
+    })
+    return request<SendMessageData>(
+      `/messages/${messageId}?${params}`,
+      { method: 'DELETE' },
+    )
+  },
 }

@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/bacnguyen2004/telegram-manager-api/actions/workflows/ci.yml/badge.svg)
 
-Monorepo FastAPI + React — quản lý tài khoản Telegram qua HTTP API và dashboard.
+Monorepo **FastAPI + React** — quản lý tài khoản Telegram qua HTTP API và dashboard web. Backend dùng **Telethon**, có **session lock** an toàn khi nhiều request, **Docker Compose** để clone là chạy.
 
 ```
 telegram-manager-api/
@@ -14,15 +14,88 @@ GitHub: https://github.com/bacnguyen2004/telegram-manager-api
 
 ---
 
-## Yêu cầu
+## GitHub About (copy vào repo Settings)
 
-- Python 3.11+
-- Node.js 18+
-- `TELEGRAM_API_ID` + `TELEGRAM_API_HASH` từ https://my.telegram.org
+**Description:**
+
+```
+FastAPI + React dashboard for Telegram account management via Telethon — sessions, groups, dialogs, messaging (send/reply/delete). Docker-ready.
+```
+
+**Topics:** `fastapi` `react` `telethon` `telegram` `typescript` `docker` `vite` `pytest`
 
 ---
 
-## Backend
+## Screenshots
+
+| Dashboard — API map | Dialogs — chat UI | Sessions |
+|---|---|---|
+| ![Dashboard](docs/screenshots/dashboard.svg) | ![Dialogs](docs/screenshots/dialogs.svg) | ![Sessions](docs/screenshots/sessions.svg) |
+
+> Thay bằng ảnh chụp thật: xem [docs/screenshots/README.md](docs/screenshots/README.md).
+
+---
+
+## How to demo (clone → chạy)
+
+**Mục tiêu:** người khác clone repo là chạy được trong vài phút.
+
+### 1. Chuẩn bị Telegram API
+
+Lấy `TELEGRAM_API_ID` và `TELEGRAM_API_HASH` tại https://my.telegram.org
+
+### 2. Backend (Docker — khuyến nghị)
+
+```powershell
+# Từ repo root
+copy backend\.env.example backend\.env
+# Điền TELEGRAM_API_ID + TELEGRAM_API_HASH vào backend\.env
+
+docker compose up --build
+```
+
+- Swagger: http://127.0.0.1:8001/docs
+- Health: http://127.0.0.1:8001/api/health
+
+### 3. Đăng nhập (chưa có session)
+
+Trong Swagger `/docs`:
+
+1. `POST /api/auth/send-code` — gửi OTP tới app Telegram
+2. `POST /api/auth/login` — nhập OTP → tạo file `.session`
+3. `GET /api/sessions` — xác nhận `total >= 1`
+
+> Đăng nhập Telegram trên điện thoại **không** tự tạo session cho API.
+
+**Copy session vào Docker** (nếu đăng nhập local trước đó):
+
+```powershell
+docker compose cp backend\runtime\sessions\. api:/app/runtime/sessions/
+```
+
+### 4. Frontend dashboard
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Mở http://localhost:5173 → **Dialogs** → chọn phone → đọc/gửi/reply/xóa tin.
+
+Proxy `/api` mặc định trỏ `http://127.0.0.1:8001`. Đổi port: tạo `frontend/.env.local` với `VITE_API_PROXY_TARGET=http://127.0.0.1:<port>`.
+
+---
+
+## Yêu cầu
+
+- Python 3.11+ (dev local) hoặc Docker
+- Node.js 18+ (frontend)
+- `TELEGRAM_API_ID` + `TELEGRAM_API_HASH`
+
+---
+
+## Backend (dev local)
 
 ```powershell
 cd backend
@@ -32,49 +105,35 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Điền `.env` (xem mục **Biến môi trường** bên dưới).
+Điền `.env` (xem **Biến môi trường**).
 
 ```powershell
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
-
-- API docs: http://127.0.0.1:8001/docs
-- Health: http://127.0.0.1:8001/api/health
 
 ### Chạy test
 
 ```powershell
 pip install -r requirements-dev.txt
 pytest
-# hoac: python -m pytest
 ```
 
-Chay tu thu muc `backend` (sau `venv\Scripts\activate`). Neu loi `No module named 'app'`, dung `python -m pytest` hoac cap nhat `pytest.ini` co `pythonpath = .`.
+Chạy từ thư mục `backend` (sau `venv\Scripts\activate`). CI tự chạy pytest trên mỗi push/PR.
 
-Test gồm: health, sessions, messages/send, reply (mock Telethon), session lock.
-
-CI tự chạy pytest trên mỗi push/PR (GitHub Actions).
+Test gồm: health, sessions, messages/send, reply, **delete** (mock Telethon), session lock.
 
 ---
 
 ## Docker
 
-Chạy backend bằng 1 lệnh (không cần cài Python local):
-
 ```powershell
-# Tu repo root — tao backend/.env truoc (copy tu .env.example)
-docker compose up --build
+docker compose up --build    # foreground
+docker compose up -d         # background
+docker compose down
 ```
 
 - API: http://127.0.0.1:8001/docs
-- Session files luu trong Docker volume `telegram-sessions`
-
-Dung `.env` o `backend/` hoac dat bien moi truong `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` truoc khi `docker compose up`.
-
-```powershell
-docker compose down      # dung container
-docker compose up -d     # chay nen
-```
+- Session files trong volume `telegram-sessions`
 
 ---
 
@@ -86,13 +145,7 @@ npm install
 npm run dev
 ```
 
-Mở http://localhost:5173 — Vite proxy `/api` → backend.
-
-Nếu backend chạy port khác `8001`, tạo `frontend/.env.local`:
-
-```env
-VITE_API_PROXY_TARGET=http://127.0.0.1:8000
-```
+Mở http://localhost:5173 — Vite proxy `/api` → backend (mặc định port **8001**).
 
 ---
 
@@ -122,13 +175,9 @@ Mỗi tài khoản (`phone`) map tới một file `.session` (SQLite). Telethon 
 
 Tất cả service dùng helper `telethon_session()` (lock → connect → yield client → disconnect → release).
 
-Trong **cùng process**, request thứ hai **xếp hàng** qua `asyncio.Lock` cho đến khi request trước xong.
-
-Giữa **nhiều process**, file lock chờ tối đa `TG_SESSION_LOCK_TIMEOUT` giây. Quá timeout → lỗi *"Session … dang duoc su dung boi request khac"*.
-
 ---
 
-## API — 20 endpoint
+## API — 21 endpoint
 
 Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 
@@ -176,19 +225,7 @@ Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 | GET | `/api/dialogs/{phone}/messages` | Đọc tin nhắn 1 chat (`?peer_id=&limit=`) |
 | POST | `/api/messages/send` | Gửi tin text (`phone`, `peer_id`, `text`) |
 | POST | `/api/messages/reply` | Trả lời tin (`phone`, `peer_id`, `reply_to_msg_id`, `text`) |
-
----
-
-## Luồng bắt đầu (chưa có session)
-
-```
-1. .env          TELEGRAM_API_ID + HASH
-2. send-code     OTP → Telegram app
-3. login         Nhập OTP → tạo file .session
-4. GET /sessions  Xác nhận count >= 1
-```
-
-> Đăng nhập Telegram trên điện thoại **không** tự tạo session cho API. Phải qua bước 2–3.
+| DELETE | `/api/messages/{message_id}` | Xóa tin (`?phone=&peer_id=`) |
 
 ---
 
@@ -216,20 +253,17 @@ app/
 | `/` | Dashboard — bản đồ API |
 | `/sessions` | Quản lý session |
 | `/groups` | Join / leave / list |
-| `/dialogs` | Chat + gửi tin |
+| `/dialogs` | Chat + gửi/reply/xóa tin |
 | `/login`, `/register`, … | Auth flow |
 | `/health` | Health check |
 
 ---
 
-## Roadmap (tóm tắt)
+## Roadmap
 
-- [x] Auth, sessions, groups, dialogs, messages/send, messages/reply
+- [x] Auth, sessions, groups, dialogs
+- [x] messages/send, reply, **delete**
 - [x] Session lock, React dashboard
-- [x] pytest cơ bản
-- [x] GitHub Actions CI
-- [x] Docker Compose (api)
-- [ ] media upload
+- [x] pytest, GitHub Actions CI, Docker Compose
+- [ ] media upload (ảnh/file)
 - [ ] Task system (bulk join/send)
-
-Chi tiết: `PLAN.md`
