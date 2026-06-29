@@ -25,18 +25,197 @@
 
 ---
 
-## 2. Kiến trúc đề xuất
+## 2. Lộ trình học — Intern / Fresher (đọc trước)
+
+> **Mục tiêu:** Học từ dễ → khó trên chính project này, đủ kỹ năng để **xin intern/fresher Backend/Python**.
+>
+> **Quy tắc vàng:** Đọc code theo `routers → services → utils`. Bỏ qua `app/db/models/` cho đến Level 3.
+>
+> Phần **Roadmap kỹ thuật (mục 5)** và **Mapping Django (mục 11)** là tài liệu tham chiếu — không cần học hết lúc đầu.
+
+### Bản đồ nhanh
+
+```
+Level 1 (1 tuần)     Đọc hiểu API đang chạy          ← BẠN Ở ĐÂY
+Level 2 (1–2 tuần)   Viết thêm endpoint đơn giản
+Level 3 (2 tuần)     Database + CRUD
+Level 4 (2 tuần)     Tích hợp dịch vụ ngoài (Telegram)
+Level 5 (2–3 tuần)   Background job (Celery)
+Level 6 (1–2 tuần)   Test + Docker + đóng gói portfolio
+```
+
+| Level | Học gì | Đọc file nào | Làm gì trên project | Kỹ năng CV |
+|---|---|---|---|---|
+| **1 — Nền tảng** | REST, FastAPI, cấu trúc layer | `main.py` → `routers/` → `utils/responses.py` | Chạy server, gọi `/docs`, giải thích 1 request join | FastAPI, REST, OpenAPI |
+| **2 — API cơ bản** | Router, Pydantic schema, exception | `schemas/`, `utils/exceptions.py`, `config.py` | Tự viết `GET /api/ping` hoặc mở rộng `/api/sessions` | Request validation, HTTP status |
+| **3 — Database** | SQLAlchemy async, CRUD, migration | `db/session.py`, `db/models/account.py` | Implement Phase 1: `POST /api/sessions/check` | ORM, SQLite, Alembic |
+| **4 — Tích hợp** | Async I/O, error handling, lock file | `services/telegram/`, `utils/session_lock.py` | Phase 2–3: auth, leave group, list dialogs | Async Python, third-party API |
+| **5 — Background** | Redis, Celery, task polling | `db/models/tasks.py`, (sẽ thêm) `workers/` | Phase 4: bulk join + poll status | Message queue, job system |
+| **6 — Portfolio** | pytest, Docker, README, Git | `tests/`, `docker-compose.yml` | Phase 7: test + public GitHub | CI mindset, deploy cơ bản |
+
+### Level 1 — Đọc hiểu (tuần 1) ← **Phase 0 gọn — bắt đầu từ đây**
+
+**Mục tiêu:** Giải thích được project cho người phỏng vấn trong 2 phút.
+
+**Chỉ đọc 7 file (theo thứ tự):**
+
+1. `app/main.py` — app khởi động thế nào
+2. `app/config.py` — đọc biến từ `.env`
+3. `app/routers/groups.py` — endpoint mỏng
+4. `app/services/telegram/groups.py` — logic join
+5. `app/services/telegram/client.py` — connect Telethon
+6. `app/utils/session_lock.py` — vì sao cần lock
+7. `app/utils/responses.py` — format response chuẩn
+
+**Bài tập (tự làm):**
+
+- [ ] Tạo `.env` từ `.env.example`, chạy `uvicorn app.main:app --reload`
+- [ ] Gọi `GET /api/health`, `GET /api/sessions` trên `/docs`
+- [ ] Vẽ sơ đồ 1 request `POST /api/groups/join` (router → service → Telethon)
+- [ ] Viết 5 câu tóm tắt project (dùng cho CV / cover letter)
+
+**Câu phỏng vấn luyện tập:**
+
+- FastAPI khác Flask/Django thế nào?
+- `async def` endpoint nghĩa là gì?
+- Vì sao tách `routers` và `services`?
+- Response `{ success, data, error }` giúp gì cho client?
+
+**Chưa cần học:** `app/db/models/`, `alembic/`, Celery, Redis.
+
+---
+
+### Level 2 — Viết API đơn giản (tuần 2–3)
+
+**Mục tiêu:** Tự thêm 1 endpoint mà không sợ phá project.
+
+**Học thêm:**
+
+- Pydantic `BaseModel`, `Field`, validation
+- `APIRouter`, `Depends`, HTTP exception
+- Đọc `routers/sessions.py`, `routers/health.py`
+
+**Project task (chọn 1):**
+
+- [ ] `GET /api/ping` → `{ "message": "pong" }` bọc envelope
+- [ ] `GET /api/sessions/{phone}` → kiểm tra 1 session có tồn tại không
+- [ ] `GET /api/config/public` → trả `app_name`, `session_dir` (không lộ secret)
+
+**Kỹ năng đạt được:** Tự tin sửa FastAPI; hiểu request/response lifecycle.
+
+---
+
+### Level 3 — Database & CRUD (tuần 4–5) → Phase 1
+
+**Mục tiêu:** Dữ liệu lưu DB, không chỉ đọc file trên disk.
+
+**Học thêm:**
+
+- SQLAlchemy 2.0 async (`select`, `session.execute`)
+- Alembic migration (`alembic upgrade head`)
+- Model `TelegramAccount` — đọc 1 model trước, đủ dùng
+
+**Project task (theo Phase 1):**
+
+- [ ] `POST /api/sessions/check` — kiểm tra session, ghi `TelegramAccount`
+- [ ] `DELETE /api/sessions/{phone}` — xóa session file
+- [ ] `GET /api/accounts` — list account từ DB
+
+**Kỹ năng đạt được:** CRUD cơ bản — đủ nhiều JD fresher Backend.
+
+---
+
+### Level 4 — Tích hợp & logic phức tạp (tuần 6–8) → Phase 2–3
+
+**Mục tiêu:** Gọi API bên ngoài, xử lý lỗi, concurrency an toàn.
+
+**Học thêm:**
+
+- Telethon async pattern
+- `SessionFileLock` — race condition / multi-process
+- Rate limit, proxy (đọc khi cần)
+
+**Project task:**
+
+- [ ] `POST /api/groups/leave`
+- [ ] `GET /api/groups/{phone}` — danh sách nhóm đã join
+- [ ] (Tùy chọn) `POST /api/auth/send-code` — OTP Telegram
+
+**Kỹ năng đạt được:** Integration API thực tế — điểm cộng lớn khi phỏng vấn.
+
+---
+
+### Level 5 — Background job (tuần 9–11) → Phase 4
+
+**Mục tiêu:** Bulk action không block HTTP request.
+
+**Học thêm:**
+
+- Redis, Celery worker
+- Task polling: `POST /action` → `GET /tasks/{id}/status`
+- Model `TaskRun`, `TaskRunLog`
+
+**Project task:**
+
+- [ ] Bulk join 10 account → chạy background, xem log realtime
+- [ ] Pause / stop / retry task
+
+**Kỹ năng đạt được:** Hiểu job queue — vượt mức fresher trung bình.
+
+---
+
+### Level 6 — Đóng gói portfolio (tuần 12–13) → Phase 7
+
+**Mục tiêu:** Repo public, recruiter mở vào là hiểu.
+
+**Checklist portfolio:**
+
+- [ ] README: mô tả, screenshot `/docs`, hướng dẫn chạy
+- [ ] `pytest` ít nhất 5 test (health, sessions, join mock)
+- [ ] `docker-compose.yml` (api + redis)
+- [ ] GitHub public, commit message rõ ràng
+- [ ] Không lộ `.env`, `*.session`
+
+**Mẫu mô tả CV (tiếng Anh ngắn):**
+
+> Built a FastAPI backend integrating Telethon for Telegram automation. Implemented layered architecture (routers/services), async SQLAlchemy, file-based session locking, and Celery background tasks for bulk operations.
+
+---
+
+### Ma trận ưu tiên học (Intern/Fresher)
+
+```
+Bắt buộc   │ Level 1 → 2 → 3
+Quan trọng │ Level 4 (1 endpoint Telethon thêm)
+Nổi bật    │ Level 5 (Celery) hoặc Level 6 (test + Docker)
+Để sau     │ Phase 5–6 đầy đủ, mapping Django chi tiết
+```
+
+**Mức tối thiểu để apply intern:** Level 1–3 + README sạch (≈ 4–5 tuần part-time).
+
+**Mức nổi bật:** thêm Level 4–5 hoặc Docker + test (≈ 8–10 tuần part-time).
+
+---
+
+### Việc làm tuần này (theo lộ trình học)
+
+1. ~~Phase 0 / Level 1 nền~~ (xong)
+2. Tạo `.env`, chạy server, hoàn thành checklist Level 1
+3. Level 2: tự viết 1 endpoint mới (`/api/ping` hoặc tương đương)
+4. Đọc `TelegramAccount` model — chuẩn bị Level 3
+5. Public repo GitHub khi xong Level 2–3
+
+---
+
+## 3. Kiến trúc đề xuất
 
 ```
 telegram_manager_api/
 ├── app/
 │   ├── main.py                 # FastAPI app, mount routers
 │   ├── config.py               # Settings từ .env
-│   ├── db/
-│   │   ├── base.py
-│   │   ├── session.py          # SQLAlchemy async session
-│   │   └── models/             # Port 11 models từ Django
 │   ├── schemas/                # Pydantic request/response
+│   ├── db/                     # ← Level 3: SQLAlchemy + models
 │   ├── routers/                # API theo domain
 │   │   ├── health.py
 │   │   ├── sessions.py
@@ -65,8 +244,8 @@ telegram_manager_api/
 │   └── utils/
 │       ├── session_lock.py
 │       └── responses.py        # Envelope chuẩn
-├── alembic/                    # DB migrations
-├── runtime/                    # logs, uploads
+├── alembic/                    # ← Level 3: DB migrations
+├── runtime/                    # locks, logs
 ├── tests/
 ├── .env.example
 ├── requirements.txt
@@ -109,7 +288,7 @@ Task async:
 
 ---
 
-## 3. Inventory Django (tham chiếu)
+## 4. Inventory Django (tham chiếu)
 
 ### Models (11)
 
@@ -169,26 +348,44 @@ Task async:
 
 ---
 
-## 4. Roadmap theo phase
+## 5. Roadmap kỹ thuật theo phase
 
-### Phase 0 — Nền tảng (1–2 tuần) ← **hiện tại**
+> Ánh xạ Level học ↔ Phase code: L1=Phase0, L2=+, L3=Phase1, L4=Phase2–3, L5=Phase4, L6=Phase7.
+>
+> Học theo **mục 2** trước; quay lại đây khi implement từng phase.
 
-Mục tiêu: skeleton production-ready.
+### Phase 0 — Nền tảng (Level 1, gọn) ✅
+
+Mục tiêu: API chạy được, dễ học — **chỉ giữ code đang dùng**. (Tương ứng **Level 1**)
 
 - [x] Đổi tên → `telegram-manager-api`
-- [ ] Init git + `.gitignore` (thêm `*.session`)
-- [ ] Tạo cấu trúc thư mục `routers/`, `services/`, `db/`
-- [ ] SQLAlchemy + Alembic, port 11 models từ Django
-- [ ] `config.py` mở rộng: `SESSION_FOLDER`, `INACTIVE_SESSION_FOLDER`, Celery URLs
-- [ ] Response envelope + exception handler
-- [ ] Health check đầy đủ (DB, Redis, session dir)
-- [ ] Di chuyển `join-group` sang `routers/groups.py`
+- [x] Init git + `.gitignore` (thêm `*.session`)
+- [x] Cấu trúc `routers/`, `services/`, `utils/`, `schemas/`
+- [x] `config.py`: Telegram API + `SESSION_FOLDER` + session lock
+- [x] Response envelope + exception handler
+- [x] Health check: Telegram config + session dir
+- [x] `POST /api/groups/join` + session lock cross-process
+- [ ] ~~DB / Alembic / Redis~~ → **Level 3** (Phase 1) mới thêm lại
 
-**Deliverable:** Repo chạy được, có DB, OpenAPI docs, 1 endpoint Telegram hoạt động.
+**Deliverable:** Repo chạy được, OpenAPI docs, 3 endpoint (`health`, `sessions`, `groups/join`).
+
+**Cấu trúc Phase 0 (đọc theo thứ tự):**
+
+```
+app/
+├── main.py
+├── config.py
+├── routers/          health, sessions, groups
+├── services/
+│   ├── health.py
+│   └── telegram/     client.py, groups.py
+├── schemas/
+└── utils/            responses, exceptions, session_lock
+```
 
 ---
 
-### Phase 1 — Session & Account (2 tuần)
+### Phase 1 — Session & Account (2 tuần) ← **tiếp theo (Level 3)**
 
 Map Django: `sessions`, `session-folders`, `accounts/meta`, `check-sessions`
 
@@ -306,7 +503,7 @@ Map Django: `tasks.py`, `task_runner.py`
 
 ---
 
-## 5. Ma trận ưu tiên
+## 6. Ma trận ưu tiên (phát triển sản phẩm)
 
 ```
 Cao  │ Phase 0 → 1 → 3 → 4 (join bulk)
@@ -316,9 +513,11 @@ Thấp │ Phase 5 → 6 → 7
 
 **Lý do:** Join group bulk + task system là lõi Django; làm xong Phase 0–4 là đã dùng được ~70% giá trị.
 
+> **Học intern/fresher:** ưu tiên theo **mục 2** (Level 1–3 trước), không cần theo ma trận này ngay.
+
 ---
 
-## 6. Chiến lược port code từ Django
+## 7. Chiến lược port code từ Django
 
 | Module Django | Cách port |
 |---|---|
@@ -346,7 +545,7 @@ async def join_group(self, phone, link):
 
 ---
 
-## 7. Quan hệ với Django sau này
+## 8. Quan hệ với Django sau này
 
 | Hướng | Mô tả |
 |---|---|
@@ -358,7 +557,7 @@ async def join_group(self, phone, link):
 
 ---
 
-## 8. GitHub
+## 9. GitHub
 
 | Project | Repo |
 |---|---|
@@ -378,17 +577,22 @@ async def join_group(self, phone, link):
 
 ---
 
-## 9. Việc làm ngay (tuần này)
+## 10. Timeline
 
-1. ~~Đổi tên thư mục → `telegram-manager-api`~~ (xong)
-2. Tạo repo GitHub private `telegram-manager-api`
-3. Phase 0: cấu trúc + DB models + response chuẩn
-4. Refactor `join-group` vào `routers/groups.py`
-5. Port `session_lock` + mở rộng `config.py`
+### Học Intern/Fresher (part-time ~10h/tuần)
 
----
+| Level | Nội dung | Tuần | Cumulative |
+|---|---|---|---|
+| 1 | Đọc hiểu Phase 0 | 1 | 1 tuần |
+| 2 | Tự viết endpoint | 1–2 | 3 tuần |
+| 3 | DB + Phase 1 | 2 | 5 tuần |
+| 4 | Phase 2–3 | 2–3 | 8 tuần |
+| 5 | Celery Phase 4 | 2–3 | 11 tuần |
+| 6 | Test + Docker | 1–2 | **~3 tháng** |
 
-## 10. Timeline ước lượng
+**Apply intern sớm:** sau Level 3 (~5 tuần). Tiếp tục Level 4–6 khi chờ phản hồi.
+
+### Phát triển sản phẩm đầy đủ (tham chiếu)
 
 | Phase | Thời gian | Cumulative |
 |---|---|---|
@@ -401,11 +605,9 @@ async def join_group(self, phone, link):
 | 6 — Profile/Infra | 2 tuần | 15 tuần |
 | 7 — Polish | 1 tuần | **~4 tháng** |
 
-Làm part-time có thể kéo dài 5–6 tháng.
-
 ---
 
-## 11. Mapping endpoint Django → FastAPI (tham chiếu đầy đủ)
+## 11. Mapping endpoint Django → FastAPI (tham chiếu — đọc khi cần)
 
 ### Account & Identity
 
@@ -464,4 +666,4 @@ Làm part-time có thể kéo dài 5–6 tháng.
 
 ---
 
-*Cập nhật lần cuối: 2026-06-29*
+*Cập nhật lần cuối: 2026-06-29 — thêm lộ trình học Intern/Fresher (mục 2)*

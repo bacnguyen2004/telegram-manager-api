@@ -25,19 +25,6 @@ class Settings:
     session_dir: Path = resolve_project_path(
         os.getenv("SESSION_FOLDER") or os.getenv("SESSION_DIR", "../session")
     )
-    inactive_session_dir: Path = resolve_project_path(
-        os.getenv("INACTIVE_SESSION_FOLDER", "../session_khong_hoat_dong")
-    )
-
-    database_url: str = os.getenv(
-        "DATABASE_URL",
-        f"sqlite+aiosqlite:///{(BASE_DIR / 'runtime' / 'db.sqlite3').as_posix()}",
-    )
-
-    celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-    celery_result_backend: str = os.getenv(
-        "CELERY_RESULT_BACKEND", "redis://localhost:6379/1"
-    )
 
     session_lock_timeout: float = float(os.getenv("TG_SESSION_LOCK_TIMEOUT", "180") or 180)
     session_lock_stale_seconds: float = float(
@@ -51,7 +38,6 @@ class Settings:
 
     def ensure_runtime_dirs(self) -> None:
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.inactive_session_dir.mkdir(parents=True, exist_ok=True)
         self.session_lock_dir.mkdir(parents=True, exist_ok=True)
         (BASE_DIR / "runtime").mkdir(parents=True, exist_ok=True)
 

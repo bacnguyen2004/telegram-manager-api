@@ -18,7 +18,6 @@ async def list_sessions() -> dict:
 
     data = SessionsData(
         session_dir=str(session_dir),
-        inactive_session_dir=str(settings.inactive_session_dir),
         count=len(sessions),
         sessions=sessions,
     )

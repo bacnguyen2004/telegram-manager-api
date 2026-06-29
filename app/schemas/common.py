@@ -15,6 +15,4 @@ class ApiEnvelope(BaseModel, Generic[T]):
 class HealthCheckData(BaseModel):
     status: str
     telegram_configured: bool
-    database: dict[str, Any]
-    redis: dict[str, Any]
-    session_dirs: dict[str, Any]
+    session_dir: dict[str, Any]

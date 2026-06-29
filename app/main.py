@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config import settings
-from .db.session import init_db
 from .routers import api_router
 from .utils.exceptions import register_exception_handlers
 
@@ -11,7 +10,6 @@ from .utils.exceptions import register_exception_handlers
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_runtime_dirs()
-    await init_db()
     yield
 
 
