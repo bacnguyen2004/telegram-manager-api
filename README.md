@@ -1,61 +1,45 @@
-# Telegram Manager FastAPI
+# Telegram Manager
 
-Ban FastAPI co ban de join group/channel Telegram bang Telethon.
+Monorepo gồm FastAPI backend và React frontend.
 
-Chi nen dung voi tai khoan cua ban va group/channel ban co quyen tham gia. Tool nay khong lam bulk join, khong ne FloodWait, va khong bypass captcha.
+```
+telegram-manager-api/
+├── backend/     # FastAPI + Telethon
+└── frontend/    # React dashboard
+```
 
-## Cai dat
+## Backend
 
 ```powershell
-cd C:\tool\telegram-manager-api
+cd C:\tool\telegram-manager-api\backend
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Mo `.env` va dien:
-
-```env
-TELEGRAM_API_ID=...
-TELEGRAM_API_HASH=...
-SESSION_DIR=C:\tool\session
-```
-
-## Chay server
+Điền `TELEGRAM_API_ID` và `TELEGRAM_API_HASH` trong `.env` (lấy từ https://my.telegram.org).
 
 ```powershell
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-Mo docs:
+API docs: http://127.0.0.1:8001/docs
 
-```text
-http://127.0.0.1:8001/docs
+## Frontend
+
+```powershell
+cd C:\tool\telegram-manager-api\frontend
+npm install
+npm run dev
 ```
 
-## API co san
+Mở http://localhost:5173 — Vite proxy `/api` → `127.0.0.1:8001`.
 
-- `GET /health`: kiem tra server, cau hinh Telegram, va thu muc session.
-- `GET /sessions`: liet ke file `.session`.
-- `POST /telegram/join-group`: join group/channel bang mot account.
+## API có sẵn
 
-Body mau:
-
-```json
-{
-  "phone": "+849xxxxxxxx",
-  "group_link": "https://t.me/example_group"
-}
-```
-
-Invite link cung dung duoc:
-
-```json
-{
-  "phone": "+849xxxxxxxx",
-  "group_link": "https://t.me/+invite_hash"
-}
-```
-
-Neu tra ve `Session chua dang nhap` hoac `Khong tim thay session`, can tao/login session Telethon truoc.
+- `POST /api/auth/send-code` — gửi OTP
+- `POST /api/auth/login` — đăng nhập, tạo file `.session`
+- `GET /api/sessions` — liệt kê session
+- `POST /api/sessions/check` — kiểm tra session
+- `GET /api/sessions/{phone}/me` — thông tin tài khoản

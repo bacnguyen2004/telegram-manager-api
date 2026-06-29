@@ -1,6 +1,8 @@
-.env
-venv/
-runtime/
+backend/.env
+backend/venv/
+backend/runtime/
+frontend/node_modules/
+frontend/dist/
 terminals/
 __pycache__/
 *.pyc

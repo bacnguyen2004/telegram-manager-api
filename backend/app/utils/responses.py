@@ -1,15 +1,4 @@
-from typing import Any, Generic, TypeVar
-
-from pydantic import BaseModel
-
-
-T = TypeVar("T")
-
-
-class ApiEnvelope(BaseModel, Generic[T]):
-    success: bool
-    data: T | None = None
-    error: str | None = None
+from typing import Any
 
 
 def success_response(data: Any = None) -> dict[str, Any]:
