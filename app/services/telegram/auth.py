@@ -36,7 +36,7 @@ class TelegramAuthService:
             if await client.is_user_authorized():
                 return self._result(
                     "info",
-                    "Session da dang nhap san. Co the dung join-group ngay.",
+                    "Session da dang nhap san. Kiem tra GET /api/sessions.",
                     phone,
                 )
             await client.send_code_request(phone)

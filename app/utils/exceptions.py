@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .responses import error_response
-from .session_lock import SessionBusyError
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -24,15 +23,6 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=error_response("Validation error", data=exc.errors()),
-        )
-
-    @app.exception_handler(SessionBusyError)
-    async def session_busy_handler(
-        request: Request, exc: SessionBusyError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content=error_response(str(exc)),
         )
 
     @app.exception_handler(Exception)

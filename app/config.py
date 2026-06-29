@@ -27,19 +27,12 @@ class Settings:
         or os.getenv("SESSION_DIR", "runtime/sessions")
     )
 
-    session_lock_timeout: float = float(os.getenv("TG_SESSION_LOCK_TIMEOUT", "180") or 180)
-    session_lock_stale_seconds: float = float(
-        os.getenv("TG_SESSION_LOCK_STALE_SECONDS", "1800") or 1800
-    )
-    session_lock_dir: Path = BASE_DIR / "runtime" / "locks" / "sessions"
-
     def validate_telegram_config(self) -> None:
         if not self.telegram_api_id or not self.telegram_api_hash:
             raise ValueError("Missing TELEGRAM_API_ID or TELEGRAM_API_HASH in .env")
 
     def ensure_runtime_dirs(self) -> None:
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.session_lock_dir.mkdir(parents=True, exist_ok=True)
         (BASE_DIR / "runtime").mkdir(parents=True, exist_ok=True)
 
 

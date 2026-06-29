@@ -57,23 +57,21 @@ Level 6 (1–2 tuần)   Test + Docker + đóng gói portfolio
 
 **Mục tiêu:** Giải thích được project cho người phỏng vấn trong 2 phút.
 
-**Chỉ đọc 8 file (theo thứ tự):**
+**Chỉ đọc 6 file (theo thứ tự):**
 
 1. `app/main.py` — setup steps khi chưa có session
 2. `app/config.py` — đọc biến từ `.env`
 3. `app/routers/auth.py` — send-code, login
 4. `app/services/telegram/auth.py` — tạo file `.session`
-5. `app/routers/groups.py` + `services/telegram/groups.py` — join
-6. `app/utils/session_lock.py` — lock file session
-7. `app/utils/responses.py` — format response chuẩn
+5. `app/routers/sessions.py` — liệt kê session
+6. `app/utils/responses.py` — format response chuẩn
 
 **Bài tập (tự làm):**
 
 - [ ] Tạo `.env` (API ID/HASH từ https://my.telegram.org)
 - [ ] `POST /api/auth/send-code` → nhận OTP trên Telegram app
 - [ ] `POST /api/auth/login` → `GET /api/sessions` thấy count = 1
-- [ ] `POST /api/groups/join` với account vừa login
-- [ ] Vẽ sơ đồ: send-code → login → join
+- [ ] Vẽ sơ đồ: send-code → login → sessions
 
 **Câu phỏng vấn luyện tập:**
 
@@ -368,7 +366,7 @@ Mục tiêu: Bắt đầu **không có file `.session`** — chỉ mới đăng 
 - [x] `POST /api/auth/send-code` — gửi OTP
 - [x] `POST /api/auth/login` — tạo file `.session` (hỗ trợ 2FA)
 - [x] `GET /api/sessions` — kiểm tra đã có session chưa
-- [x] `POST /api/groups/join` + session lock
+- [ ] `groups/join`, session lock → **Phase 2+**
 - [ ] DB / Alembic / Redis → **Level 3**
 
 **Luồng dùng từ đầu (không có session):**
@@ -378,23 +376,28 @@ Mục tiêu: Bắt đầu **không có file `.session`** — chỉ mới đăng 
 2. send-code     OTP gửi về Telegram app
 3. login         Nhập OTP → tạo file .session
 4. sessions      Xác nhận count >= 1
-5. groups/join   Join group
 ```
 
-**Deliverable:** Repo chạy được, OpenAPI docs, **tự tạo session qua API**, join group.
+**Deliverable:** Repo chạy được, OpenAPI docs, **3 endpoint** — tự tạo session qua API.
+
+**API Phase 0 (chỉ 3 endpoint):**
+
+| Endpoint | Mô tả |
+|---|---|
+| `POST /api/auth/send-code` | Gửi OTP |
+| `POST /api/auth/login` | Tạo session |
+| `GET /api/sessions` | Liệt kê session |
 
 **Cấu trúc Phase 0 (đọc theo thứ tự):**
 
 ```
 app/
-├── main.py           ← setup steps khi GET /
+├── main.py
 ├── config.py
-├── routers/          health, auth, sessions, groups
-├── services/
-│   ├── health.py
-│   └── telegram/     auth.py, client.py, groups.py
+├── routers/          auth, sessions
+├── services/telegram/  auth.py
 ├── schemas/
-└── utils/            responses, exceptions, session_lock
+└── utils/            responses, exceptions
 ```
 
 ---

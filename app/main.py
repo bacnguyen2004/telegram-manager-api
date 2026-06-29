@@ -12,7 +12,6 @@ SETUP_STEPS = [
     "2. POST /api/auth/send-code — gui OTP ve Telegram app",
     "3. POST /api/auth/login — nhap ma OTP (va password 2FA neu co)",
     "4. GET /api/sessions — xac nhan da co file .session",
-    "5. POST /api/groups/join — join group/channel",
 ]
 
 
