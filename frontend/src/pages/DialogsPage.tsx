@@ -404,7 +404,15 @@ export function DialogsPage() {
 
             {selected && !loadingMessages && messages.length > 0 && (
               <ul className="messages-list">
-                {messages.map((msg) => (
+                {messages.map((msg) => {
+                  const isPhoto =
+                    msg.has_photo ||
+                    msg.content_type === 'photo' ||
+                    (msg.has_media && msg.text === '[photo]')
+                  const displayText =
+                    isPhoto && (msg.text === '[photo]' || !msg.text) ? '' : msg.text
+
+                  return (
                   <li
                     key={msg.id}
                     className={`message-row${msg.outgoing ? ' message-row--out' : ''}`}
@@ -416,8 +424,20 @@ export function DialogsPage() {
                         </span>
                         <span className="message-date muted">{msg.date}</span>
                       </div>
-                      <p className="message-text">{msg.text || '—'}</p>
-                      {msg.has_media && (
+                      {isPhoto && selected && (
+                        <img
+                          className="message-photo"
+                          src={api.messagePhotoUrl(phone, selected.id, msg.id)}
+                          alt="Ảnh"
+                          loading="lazy"
+                        />
+                      )}
+                      {displayText ? (
+                        <p className="message-text">{displayText}</p>
+                      ) : (
+                        !isPhoto && <p className="message-text">—</p>
+                      )}
+                      {msg.has_media && !isPhoto && (
                         <span className="message-type muted">{msg.content_type}</span>
                       )}
                       <div className="message-actions">
@@ -445,7 +465,8 @@ export function DialogsPage() {
                       </div>
                     </div>
                   </li>
-                ))}
+                  )
+                })}
               </ul>
             )}
 

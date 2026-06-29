@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from ..schemas.common import ApiEnvelope
 from ..schemas.dialogs import DialogMessagesData, DialogsData
@@ -7,6 +8,23 @@ from ..utils.responses import success_response
 
 
 router = APIRouter(prefix="/dialogs", tags=["dialogs"])
+
+
+@router.get("/{phone}/messages/{message_id}/photo")
+async def get_message_photo(
+    phone: str,
+    message_id: int,
+    peer_id: str = Query(..., description="Dialog id hoac username"),
+) -> Response:
+    result = await telegram_dialog_service.get_message_photo(
+        phone,
+        peer_id,
+        message_id,
+    )
+    if isinstance(result, dict):
+        raise HTTPException(status_code=404, detail=result.get("message", "Not found"))
+    content, mime_type = result
+    return Response(content=content, media_type=mime_type)
 
 
 @router.get("/{phone}/messages", response_model=ApiEnvelope[DialogMessagesData])

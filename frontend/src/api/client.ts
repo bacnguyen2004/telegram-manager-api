@@ -205,6 +205,11 @@ export const api = {
     )
   },
 
+  messagePhotoUrl(phone: string, peerId: string, messageId: number) {
+    const params = new URLSearchParams({ peer_id: peerId })
+    return `/api/dialogs/${encodeURIComponent(phone)}/messages/${messageId}/photo?${params}`
+  },
+
   sendMessage(phone: string, peerId: string, text: string) {
     return request<SendMessageData>('/messages/send', {
       method: 'POST',

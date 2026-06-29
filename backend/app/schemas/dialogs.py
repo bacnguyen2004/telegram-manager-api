@@ -46,6 +46,7 @@ class DialogMessageItem(BaseModel):
     outgoing: bool
     content_type: str
     has_media: bool
+    has_photo: bool = False
     text: str
 
 

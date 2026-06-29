@@ -189,6 +189,7 @@ export interface DialogMessageItem {
   outgoing: boolean
   content_type: string
   has_media: boolean
+  has_photo: boolean
   text: string
 }
 
