@@ -13,7 +13,7 @@
 | **Vai trò** | Web UI + admin, thao tác trên trình duyệt | API-first, tích hợp tool/script/client khác |
 | **Người dùng** | Thao tác qua giao diện | Gọi qua HTTP / OpenAPI / automation |
 | **UI** | 27 trang HTML + Bootstrap | Không UI (hoặc thêm SPA sau) |
-| **Hiện trạng** | ~50 API, Celery, 11 models, đầy đủ chức năng | 3 endpoint: health, sessions, join-group |
+| **Hiện trạng** | ~50 API, Celery, 11 models, đầy đủ chức năng | 3 endpoint: send-code, login, sessions |
 
 **Mục tiêu:** FastAPI đạt **parity về nghiệp vụ** với Django, nhưng kiến trúc sạch hơn — không copy nguyên 2400 dòng `views.py`.
 
