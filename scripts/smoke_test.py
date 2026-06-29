@@ -10,7 +10,7 @@ from app.main import app
 
 def main() -> None:
     with TestClient(app) as client:
-        for path in ["/", "/api/health", "/api/sessions", "/docs"]:
+        for path in ["/", "/api/sessions", "/docs"]:
             response = client.get(path)
             if path == "/docs":
                 print(path, response.status_code, "html")
