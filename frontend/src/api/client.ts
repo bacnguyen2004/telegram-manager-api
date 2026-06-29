@@ -185,4 +185,21 @@ export const api = {
       body: JSON.stringify({ phone, peer_id: peerId, text }),
     })
   },
+
+  replyMessage(
+    phone: string,
+    peerId: string,
+    replyToMsgId: number,
+    text: string,
+  ) {
+    return request<SendMessageData>('/messages/reply', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        reply_to_msg_id: replyToMsgId,
+        text,
+      }),
+    })
+  },
 }

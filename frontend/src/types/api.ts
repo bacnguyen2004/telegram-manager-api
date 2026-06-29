@@ -207,5 +207,6 @@ export interface SendMessageData {
   phone: string
   peer_id: string
   message_id: number | null
+  reply_to_msg_id: number | null
   message: string
 }

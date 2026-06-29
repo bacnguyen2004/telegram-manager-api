@@ -8,6 +8,7 @@ async def test_send_message_success(client, monkeypatch):
             "phone": phone,
             "peer_id": peer_id,
             "message_id": 42,
+            "reply_to_msg_id": None,
             "message": "Da gui tin nhan",
         }
 
@@ -43,6 +44,7 @@ async def test_send_message_service_error(client, monkeypatch):
             "phone": phone,
             "peer_id": peer_id,
             "message_id": None,
+            "reply_to_msg_id": None,
             "message": "Session chua dang nhap hoac da het han",
         }
 
@@ -65,6 +67,45 @@ async def test_send_message_service_error(client, monkeypatch):
     data = response.json()["data"]
     assert data["status"] == "error"
     assert "het han" in data["message"]
+
+
+async def test_reply_message_success(client, monkeypatch):
+    async def mock_reply_message(
+        phone: str,
+        peer_id: str,
+        text: str,
+        reply_to_msg_id: int,
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": 99,
+            "reply_to_msg_id": reply_to_msg_id,
+            "message": "Da tra loi tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "reply_message",
+        mock_reply_message,
+    )
+
+    response = client.post(
+        "/api/messages/reply",
+        json={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+            "reply_to_msg_id": 55,
+            "text": "Tra loi day",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["reply_to_msg_id"] == 55
+    assert data["message_id"] == 99
 
 
 def test_send_message_validation_empty_text(client):

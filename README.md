@@ -100,7 +100,7 @@ Giữa **nhiều process**, file lock chờ tối đa `TG_SESSION_LOCK_TIMEOUT` 
 
 ---
 
-## API — 19 endpoint
+## API — 20 endpoint
 
 Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 
@@ -147,6 +147,7 @@ Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 | GET | `/api/dialogs/{phone}` | Tất cả chat (private, bot, group, channel) |
 | GET | `/api/dialogs/{phone}/messages` | Đọc tin nhắn 1 chat (`?peer_id=&limit=`) |
 | POST | `/api/messages/send` | Gửi tin text (`phone`, `peer_id`, `text`) |
+| POST | `/api/messages/reply` | Trả lời tin (`phone`, `peer_id`, `reply_to_msg_id`, `text`) |
 
 ---
 
@@ -195,10 +196,10 @@ app/
 
 ## Roadmap (tóm tắt)
 
-- [x] Auth, sessions, groups, dialogs, messages/send
+- [x] Auth, sessions, groups, dialogs, messages/send, messages/reply
 - [x] Session lock, React dashboard
 - [x] pytest cơ bản
-- [ ] messages/reply, media upload
+- [ ] media upload
 - [ ] Docker Compose
 - [ ] Task system (bulk join/send)
 

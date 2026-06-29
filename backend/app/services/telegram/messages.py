@@ -14,6 +14,32 @@ class TelegramMessageService:
         self.session_dir = session_dir
 
     async def send_message(self, phone: str, peer_id: str, text: str) -> dict:
+        return await self._send(phone, peer_id, text)
+
+    async def reply_message(
+        self,
+        phone: str,
+        peer_id: str,
+        text: str,
+        reply_to_msg_id: int,
+    ) -> dict:
+        return await self._send(
+            phone,
+            peer_id,
+            text,
+            reply_to_msg_id=reply_to_msg_id,
+            success_message="Da tra loi tin nhan",
+        )
+
+    async def _send(
+        self,
+        phone: str,
+        peer_id: str,
+        text: str,
+        *,
+        reply_to_msg_id: int | None = None,
+        success_message: str = "Da gui tin nhan",
+    ) -> dict:
         phone = phone.strip()
         peer_ref = str(peer_id or "").strip()
         text = (text or "").strip()
@@ -24,6 +50,8 @@ class TelegramMessageService:
             return self._error(phone, peer_ref, "Thieu peer_id")
         if not text:
             return self._error(phone, peer_ref, "Thieu noi dung tin nhan")
+        if reply_to_msg_id is not None and reply_to_msg_id < 1:
+            return self._error(phone, peer_ref, "reply_to_msg_id khong hop le")
 
         try:
             settings.validate_telegram_config()
@@ -50,14 +78,22 @@ class TelegramMessageService:
                     )
 
                 entity = await self._resolve_peer(client, peer_ref)
-                sent = await client.send_message(entity, text)
+                if reply_to_msg_id is not None:
+                    sent = await client.send_message(
+                        entity,
+                        text,
+                        reply_to=reply_to_msg_id,
+                    )
+                else:
+                    sent = await client.send_message(entity, text)
 
                 return {
                     "status": "success",
                     "phone": phone,
                     "peer_id": peer_ref,
                     "message_id": getattr(sent, "id", None),
-                    "message": "Da gui tin nhan",
+                    "reply_to_msg_id": reply_to_msg_id,
+                    "message": success_message,
                 }
         except FloodWaitError as exc:
             return self._error(phone, peer_ref, f"Flood wait {exc.seconds}s")
@@ -82,6 +118,7 @@ class TelegramMessageService:
             "phone": phone,
             "peer_id": peer_id,
             "message_id": None,
+            "reply_to_msg_id": None,
             "message": message,
         }
 

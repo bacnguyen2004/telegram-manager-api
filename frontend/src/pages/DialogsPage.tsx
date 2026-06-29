@@ -37,6 +37,7 @@ export function DialogsPage() {
   const [filter, setFilter] = useState<KindFilter>('all')
   const [search, setSearch] = useState('')
   const [draftText, setDraftText] = useState('')
+  const [replyTo, setReplyTo] = useState<DialogMessageItem | null>(null)
   const [loadingDialogs, setLoadingDialogs] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
@@ -70,6 +71,7 @@ export function DialogsPage() {
     setSelected(null)
     setMessages([])
     setMessagesTitle('')
+    setReplyTo(null)
     try {
       const res = await api.listDialogs(phone)
       if (!res.success || !res.data) {
@@ -120,6 +122,7 @@ export function DialogsPage() {
   async function handleSelectDialog(dialog: DialogItem) {
     setSelected(dialog)
     setDraftText('')
+    setReplyTo(null)
     resetAlerts()
     setMessagesTitle(dialog.title)
     await loadMessages(dialog)
@@ -134,9 +137,11 @@ export function DialogsPage() {
     setSending(true)
     resetAlerts()
     try {
-      const res = await api.sendMessage(phone, selected.id, text)
+      const res = replyTo
+        ? await api.replyMessage(phone, selected.id, replyTo.id, text)
+        : await api.sendMessage(phone, selected.id, text)
       if (!res.success || !res.data) {
-        setError(res.error ?? 'Gửi tin thất bại')
+        setError(res.error ?? (replyTo ? 'Trả lời thất bại' : 'Gửi tin thất bại'))
         return
       }
       if (res.data.status === 'error') {
@@ -144,6 +149,7 @@ export function DialogsPage() {
         return
       }
       setDraftText('')
+      setReplyTo(null)
       setSuccess(res.data.message)
       await loadMessages(selected, false)
     } catch (err) {
@@ -334,6 +340,19 @@ export function DialogsPage() {
                       {msg.has_media && (
                         <span className="message-type muted">{msg.content_type}</span>
                       )}
+                      <div className="message-actions">
+                        <button
+                          type="button"
+                          className="btn btn--sm btn--ghost message-reply-btn"
+                          onClick={() => {
+                            setReplyTo(msg)
+                            setDraftText('')
+                            resetAlerts()
+                          }}
+                        >
+                          Reply
+                        </button>
+                      </div>
                     </div>
                   </li>
                 ))}
@@ -342,9 +361,33 @@ export function DialogsPage() {
 
             {selected && (
               <form className="message-compose" onSubmit={(e) => void handleSendMessage(e)}>
+                {replyTo && (
+                  <div className="reply-preview">
+                    <div>
+                      <p className="reply-preview-label">
+                        Trả lời #{replyTo.id} —{' '}
+                        {replyTo.outgoing ? 'Bạn' : replyTo.sender_name || '—'}
+                      </p>
+                      <p className="reply-preview-text muted">
+                        {(replyTo.text || '[media]').slice(0, 120)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => setReplyTo(null)}
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                )}
                 <label className="field message-compose-field">
                   <span>
-                    <code>POST /api/messages/send</code>
+                    <code>
+                      {replyTo
+                        ? 'POST /api/messages/reply'
+                        : 'POST /api/messages/send'}
+                    </code>
                   </span>
                   <textarea
                     rows={3}
@@ -363,7 +406,7 @@ export function DialogsPage() {
                     className="btn btn--primary"
                     disabled={sending || loadingMessages || !draftText.trim()}
                   >
-                    {sending ? 'Đang gửi…' : 'Gửi'}
+                    {sending ? 'Đang gửi…' : replyTo ? 'Trả lời' : 'Gửi'}
                   </button>
                 </div>
               </form>

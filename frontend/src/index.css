@@ -1055,6 +1055,45 @@ a {
   font-size: 11px;
 }
 
+.message-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.message-reply-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.reply-preview {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.reply-preview-label {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.reply-preview-text {
+  margin: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
+
 .message-compose {
   margin-top: auto;
   padding-top: 16px;
