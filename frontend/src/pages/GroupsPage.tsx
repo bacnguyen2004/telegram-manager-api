@@ -1,24 +1,137 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { Pagination } from '../components/Pagination'
 import { PhoneSelect } from '../components/PhoneSelect'
 import { usePagination } from '../hooks/usePagination'
-import { StatusBadge } from '../components/StatusBadge'
 import type { GroupItem } from '../types/api'
 
-type Tab = 'list' | 'join' | 'leave' | 'leave-all'
+type KindFilter = 'all' | 'group' | 'channel'
+type SortKey = 'title' | 'members' | 'type'
+type SortDir = 'asc' | 'desc'
+type OpsTab = 'join' | 'leave' | 'leave-all'
+
+const FILTER_OPTIONS: { id: KindFilter; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'group', label: 'Groups' },
+  { id: 'channel', label: 'Channels' },
+]
+
+function formatMembers(count: number): string {
+  if (!count) return '—'
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`
+  return count.toLocaleString('vi-VN')
+}
+
+function groupRef(group: GroupItem): string {
+  return group.link || (group.username ? `@${group.username}` : String(group.id))
+}
+
+function GroupTypeIcon({ isChannel }: { isChannel: boolean }) {
+  if (isChannel) {
+    return (
+      <svg className="groups-type-svg" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path
+          d="M4 10v4m0-4 8-3v10l-8-3m8 3 4-1.5V11.5L12 10"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )
+  }
+  return (
+    <svg className="groups-type-svg" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="9" cy="8" r="3" stroke="currentColor" strokeWidth="1.75" />
+      <circle cx="17" cy="9" r="2.5" stroke="currentColor" strokeWidth="1.75" />
+      <path
+        d="M4 19c0-2.8 2.2-5 5-5s5 2.2 5 5M14 19c0-2 1.5-3.5 3.5-3.5"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function sortGroups(
+  items: GroupItem[],
+  key: SortKey,
+  dir: SortDir,
+): GroupItem[] {
+  const sorted = [...items].sort((a, b) => {
+    if (key === 'title') return a.title.localeCompare(b.title, 'vi')
+    if (key === 'members') return (a.members_count || 0) - (b.members_count || 0)
+    const typeA = a.is_channel ? 1 : 0
+    const typeB = b.is_channel ? 1 : 0
+    return typeA - typeB
+  })
+  return dir === 'desc' ? sorted.reverse() : sorted
+}
 
 export function GroupsPage() {
-  const [tab, setTab] = useState<Tab>('list')
   const [phone, setPhone] = useState('')
-  const [groupLink, setGroupLink] = useState('')
   const [groups, setGroups] = useState<GroupItem[]>([])
+  const [filter, setFilter] = useState<KindFilter>('all')
+  const [search, setSearch] = useState('')
+  const [opsTab, setOpsTab] = useState<OpsTab>('join')
+  const [sortKey, setSortKey] = useState<SortKey>('title')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [groupLink, setGroupLink] = useState('')
   const [loading, setLoading] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [leavingId, setLeavingId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [info, setInfo] = useState('')
   const [leaveAllCount, setLeaveAllCount] = useState<number | null>(null)
+
+  const filterCounts = useMemo(() => {
+    const tallies: Record<KindFilter, number> = {
+      all: groups.length,
+      group: 0,
+      channel: 0,
+    }
+    for (const group of groups) {
+      if (group.is_channel) tallies.channel += 1
+      else tallies.group += 1
+    }
+    return tallies
+  }, [groups])
+
+  const totalMembers = useMemo(
+    () => groups.reduce((sum, group) => sum + (group.members_count || 0), 0),
+    [groups],
+  )
+
+  const filteredGroups = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const matched = groups.filter((group) => {
+      if (filter === 'group' && group.is_channel) return false
+      if (filter === 'channel' && !group.is_channel) return false
+      if (!q) return true
+      return (
+        group.title.toLowerCase().includes(q) ||
+        group.username.toLowerCase().includes(q) ||
+        group.type.toLowerCase().includes(q) ||
+        String(group.id).includes(q)
+      )
+    })
+    return sortGroups(matched, sortKey, sortDir)
+  }, [groups, filter, search, sortKey, sortDir])
+
+  const {
+    items: pagedGroups,
+    page,
+    setPage,
+    totalPages,
+    from,
+    to,
+    pageSize,
+    setPageSize,
+  } = usePagination(filteredGroups, 20)
 
   function resetAlerts() {
     setError('')
@@ -26,9 +139,55 @@ export function GroupsPage() {
     setInfo('')
   }
 
-  async function handleJoin(e: React.FormEvent) {
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(key)
+    setSortDir(key === 'members' ? 'desc' : 'asc')
+  }
+
+  function sortIndicator(key: SortKey): string {
+    if (sortKey !== key) return ''
+    return sortDir === 'asc' ? ' ↑' : ' ↓'
+  }
+
+  async function handleLoadGroups(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    resetAlerts()
+    setGroups([])
+    try {
+      const res = await api.listGroups(phone)
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Không tải được danh sách nhóm')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      setGroups(res.data.groups)
+      setSuccess(`Quét xong — ${res.data.total} nhóm / channel`)
+    } catch {
+      setError('Không kết nối được API.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function reloadGroups() {
+    if (!phone) return
+    const res = await api.listGroups(phone)
+    if (res.success && res.data?.status === 'success') {
+      setGroups(res.data.groups)
+    }
+  }
+
+  async function handleJoin(e: React.FormEvent) {
+    e.preventDefault()
+    setActionLoading(true)
     resetAlerts()
     try {
       const res = await api.joinGroup(phone, groupLink.trim())
@@ -45,21 +204,24 @@ export function GroupsPage() {
         return
       }
       setSuccess(res.data.message)
+      setGroupLink('')
+      await reloadGroups()
     } catch {
       setError('Không kết nối được API.')
     } finally {
-      setLoading(false)
+      setActionLoading(false)
     }
   }
 
-  async function handleLeave(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
+  async function leaveGroupTarget(target: string, removeId?: number) {
+    if (!phone || !target.trim()) return
+    setActionLoading(true)
+    if (removeId !== undefined) setLeavingId(removeId)
     resetAlerts()
     try {
-      const res = await api.leaveGroup(phone, groupLink.trim())
+      const res = await api.leaveGroup(phone, target.trim())
       if (!res.success || !res.data) {
-        setError(res.error ?? 'Leave thất bại')
+        setError(res.error ?? 'Rời nhóm thất bại')
         return
       }
       if (res.data.status === 'error') {
@@ -67,11 +229,27 @@ export function GroupsPage() {
         return
       }
       setSuccess(res.data.message)
+      if (removeId !== undefined) {
+        setGroups((prev) => prev.filter((item) => item.id !== removeId))
+      }
+      setGroupLink('')
     } catch {
       setError('Không kết nối được API.')
     } finally {
-      setLoading(false)
+      setActionLoading(false)
+      setLeavingId(null)
     }
+  }
+
+  async function handleLeave(e: React.FormEvent) {
+    e.preventDefault()
+    await leaveGroupTarget(groupLink)
+  }
+
+  async function handleLeaveRow(group: GroupItem) {
+    const confirmed = window.confirm(`Rời "${group.title}"?`)
+    if (!confirmed) return
+    await leaveGroupTarget(groupRef(group), group.id)
   }
 
   async function handleLeaveAll(e: React.FormEvent) {
@@ -81,7 +259,7 @@ export function GroupsPage() {
     )
     if (!confirmed) return
 
-    setLoading(true)
+    setActionLoading(true)
     resetAlerts()
     setLeaveAllCount(null)
     try {
@@ -97,94 +275,91 @@ export function GroupsPage() {
       setLeaveAllCount(res.data.left_count)
       setSuccess(res.data.message)
       setGroups([])
-      setTab('leave-all')
     } catch {
       setError('Không kết nối được API.')
     } finally {
-      setLoading(false)
+      setActionLoading(false)
     }
   }
 
-  async function handleList(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    resetAlerts()
-    setGroups([])
-    try {
-      const res = await api.listGroups(phone)
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Không tải được danh sách nhóm')
-        return
-      }
-      if (res.data.status === 'error') {
-        setError(res.data.message)
-        return
-      }
-      setGroups(res.data.groups)
-      setSuccess(`Tìm thấy ${res.data.total} nhóm/channel`)
-    } catch {
-      setError('Không kết nối được API.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const {
-    items: pagedGroups,
-    page,
-    setPage,
-    totalPages,
-    from,
-    to,
-    pageSize,
-    setPageSize,
-  } = usePagination(groups, 15)
+  const hasData = groups.length > 0
 
   return (
-    <div className="page">
-      <header className="page-header">
+    <div className={`page page--groups${hasData ? ' page--groups-active' : ''}`}>
+      <header className="page-header groups-page-header">
         <div>
-          <h1>Groups</h1>
-          <p className="page-desc">Join / Leave / Danh sách nhóm Telegram</p>
+          <span className="groups-page-kicker">Community manager</span>
+          <h1>Groups & Channels</h1>
+          <p className="page-desc">
+            Quản lý membership — join, rời, lọc theo bảng. Không phải giao diện chat.
+          </p>
         </div>
-      </header>
-
-      <div className="tab-bar">
-        {(
-          [
-            { id: 'list' as Tab, label: 'Danh sách' },
-            { id: 'join' as Tab, label: 'Join' },
-            { id: 'leave' as Tab, label: 'Leave' },
-            { id: 'leave-all' as Tab, label: 'Leave all' },
-          ]
-        ).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`tab-btn${tab === item.id ? ' tab-btn--active' : ''}`}
-            onClick={() => {
-              setTab(item.id)
-              resetAlerts()
-            }}
-          >
-            {item.label}
+        <form className="groups-session-bar" onSubmit={(e) => void handleLoadGroups(e)}>
+          <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
+          <button type="submit" className="btn btn--primary" disabled={loading || !phone}>
+            {loading ? 'Đang quét…' : hasData ? 'Quét lại' : 'Quét nhóm'}
           </button>
-        ))}
-      </div>
+        </form>
+      </header>
 
       <Alert type="error" message={error} />
       <Alert type="success" message={success} />
       {info && <Alert type="info" message={info} />}
 
-      {tab === 'join' && (
-        <section className="panel panel--full">
-          <h2>
-            <code>POST /api/groups/join</code>
-          </h2>
-          <form onSubmit={(e) => void handleJoin(e)}>
-            <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
-            <label className="field">
-              <span>Link nhóm</span>
+      <section className="stats-grid groups-stats">
+        <article className="stat-card stat-card--groups">
+          <p className="stat-label">Groups</p>
+          <p className="stat-value">{loading ? '—' : filterCounts.group}</p>
+        </article>
+        <article className="stat-card stat-card--channels">
+          <p className="stat-label">Channels</p>
+          <p className="stat-value">{loading ? '—' : filterCounts.channel}</p>
+        </article>
+        <article className="stat-card">
+          <p className="stat-label">Thành viên (ước tính)</p>
+          <p className="stat-value">{loading ? '—' : formatMembers(totalMembers)}</p>
+        </article>
+        <article className="stat-card">
+          <p className="stat-label">Đang hiển thị</p>
+          <p className="stat-value">{hasData ? filteredGroups.length : '—'}</p>
+        </article>
+      </section>
+
+      <section className="panel groups-ops-panel">
+        <div className="groups-ops-tabs" role="tablist" aria-label="Thao tác nhóm">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={opsTab === 'join'}
+            className={`groups-ops-tab${opsTab === 'join' ? ' groups-ops-tab--active' : ''}`}
+            onClick={() => setOpsTab('join')}
+          >
+            Join nhóm
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={opsTab === 'leave'}
+            className={`groups-ops-tab${opsTab === 'leave' ? ' groups-ops-tab--active' : ''}`}
+            onClick={() => setOpsTab('leave')}
+          >
+            Rời 1 nhóm
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={opsTab === 'leave-all'}
+            className={`groups-ops-tab groups-ops-tab--danger${opsTab === 'leave-all' ? ' groups-ops-tab--active' : ''}`}
+            onClick={() => setOpsTab('leave-all')}
+          >
+            Rời tất cả
+          </button>
+        </div>
+
+        {opsTab === 'join' && (
+          <form className="groups-ops-form" onSubmit={(e) => void handleJoin(e)}>
+            <label className="field groups-ops-field">
+              <span>Link invite</span>
               <input
                 type="url"
                 placeholder="https://t.me/example_group"
@@ -193,22 +368,20 @@ export function GroupsPage() {
                 required
               />
             </label>
-            <button type="submit" className="btn btn--primary btn--block" disabled={loading || !phone}>
-              {loading ? 'Đang join…' : 'Join group'}
+            <button
+              type="submit"
+              className="btn btn--primary"
+              disabled={actionLoading || !phone}
+            >
+              {actionLoading ? 'Đang join…' : 'Join'}
             </button>
           </form>
-        </section>
-      )}
+        )}
 
-      {tab === 'leave' && (
-        <section className="panel panel--full">
-          <h2>
-            <code>POST /api/groups/leave</code>
-          </h2>
-          <form onSubmit={(e) => void handleLeave(e)}>
-            <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
-            <label className="field">
-              <span>Link / username / ID nhóm</span>
+        {opsTab === 'leave' && (
+          <form className="groups-ops-form" onSubmit={(e) => void handleLeave(e)}>
+            <label className="field groups-ops-field">
+              <span>Link, @username hoặc ID</span>
               <input
                 type="text"
                 placeholder="https://t.me/example_group"
@@ -217,124 +390,195 @@ export function GroupsPage() {
                 required
               />
             </label>
-            <button type="submit" className="btn btn--primary btn--block" disabled={loading || !phone}>
-              {loading ? 'Đang leave…' : 'Leave group'}
-            </button>
-          </form>
-        </section>
-      )}
-
-      {tab === 'leave-all' && (
-        <section className="panel panel--full">
-          <h2>
-            <code>POST /api/groups/leave-all</code>
-          </h2>
-          <div className="hint-box" style={{ marginBottom: 16 }}>
-            <p>Rời tất cả group và channel của một tài khoản. Có thể mất vài phút nếu join nhiều nhóm.</p>
-          </div>
-          <form onSubmit={(e) => void handleLeaveAll(e)}>
-            <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
             <button
               type="submit"
-              className="btn btn--danger btn--block"
-              disabled={loading || !phone}
+              className="btn btn--danger"
+              disabled={actionLoading || !phone}
             >
-              {loading ? 'Đang rời từng nhóm… (có thể lâu)' : 'Leave tất cả nhóm'}
+              {actionLoading ? 'Đang rời…' : 'Rời'}
             </button>
           </form>
-          {leaveAllCount !== null && (
-            <div className="code-result" style={{ marginTop: 20 }}>
-              <p className="code-result-label">Đã rời</p>
-              <p className="code-result-value">{leaveAllCount}</p>
-              <p className="muted">nhóm / channel</p>
-            </div>
-          )}
-        </section>
-      )}
+        )}
 
-      {tab === 'list' && (
-        <>
-          <section className="panel">
-            <h2>
-              <code>GET /api/groups/{'{phone}'}</code>
-            </h2>
-            <form className="inline-form" onSubmit={(e) => void handleList(e)}>
-              <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
-              <button type="submit" className="btn btn--primary" disabled={loading || !phone}>
-                {loading ? 'Đang tải…' : 'Tải danh sách'}
+        {opsTab === 'leave-all' && (
+          <div className="groups-ops-form groups-ops-form--danger">
+            <p className="groups-ops-warning">
+              Rời <strong>tất cả</strong> group và channel của session — không hoàn tác.
+            </p>
+            <form onSubmit={(e) => void handleLeaveAll(e)}>
+              <button
+                type="submit"
+                className="btn btn--danger"
+                disabled={actionLoading || !phone}
+              >
+                {actionLoading ? 'Đang rời từng nhóm…' : 'Leave tất cả'}
               </button>
             </form>
-          </section>
+            {leaveAllCount !== null && (
+              <p className="groups-leaveall-note">
+                Đã rời <strong>{leaveAllCount}</strong> nhóm / channel
+              </p>
+            )}
+          </div>
+        )}
+      </section>
 
-          {groups.length > 0 && (
-            <section className="panel">
-              <div className="panel-head">
-                <h2>Nhóm đã join</h2>
-                <div className="header-actions">
-                  <span className="panel-meta">{groups.length} mục</span>
-                  <button
-                    type="button"
-                    className="btn btn--sm btn--danger"
-                    disabled={loading || !phone}
-                    onClick={() => {
-                      setTab('leave-all')
-                      resetAlerts()
-                    }}
-                  >
-                    Leave all →
-                  </button>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Tên</th>
-                      <th>Loại</th>
-                      <th>Username</th>
-                      <th>Members</th>
-                      <th>Link</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedGroups.map((group) => (
-                      <tr key={group.id}>
-                        <td>{group.title || '—'}</td>
+      <section className="panel groups-directory-panel">
+        <div className="groups-directory-top">
+          <div className="groups-directory-title">
+            <h2>Danh mục đã join</h2>
+            <span className="panel-meta">
+              {hasData
+                ? `${filteredGroups.length} / ${groups.length} mục`
+                : 'Chưa quét session'}
+            </span>
+          </div>
+        </div>
+
+        {hasData && (
+          <div className="groups-directory-toolbar">
+            <input
+              type="search"
+              className="groups-directory-search"
+              placeholder="Tìm tên, @username, ID…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div className="groups-filter-pills">
+              {FILTER_OPTIONS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`groups-filter-pill${filter === item.id ? ' groups-filter-pill--active' : ''}`}
+                  onClick={() => setFilter(item.id)}
+                >
+                  {item.label}
+                  <span>{filterCounts[item.id]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!hasData && !loading && (
+          <div className="groups-directory-empty">
+            <div className="groups-directory-empty-icon" aria-hidden>
+              <svg viewBox="0 0 64 64" fill="none">
+                <rect x="8" y="14" width="48" height="36" rx="6" stroke="currentColor" strokeWidth="2" />
+                <path d="M8 24h48M20 34h24M20 42h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </div>
+            <h3>Chưa có dữ liệu nhóm</h3>
+            <p className="muted">
+              Chọn session ở góc phải và bấm <strong>Quét nhóm</strong> để lấy danh sách từ Telegram.
+            </p>
+          </div>
+        )}
+
+        {loading && (
+          <div className="empty-state">Đang quét nhóm từ session…</div>
+        )}
+
+        {hasData && filteredGroups.length === 0 && (
+          <div className="empty-state">Không có nhóm khớp bộ lọc.</div>
+        )}
+
+        {hasData && pagedGroups.length > 0 && (
+          <>
+            <div className="table-wrap groups-table-wrap">
+              <table className="data-table data-table--groups">
+                <thead>
+                  <tr>
+                    <th className="col-type">
+                      <button type="button" className="groups-th-btn" onClick={() => toggleSort('type')}>
+                        Loại{sortIndicator('type')}
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className="groups-th-btn" onClick={() => toggleSort('title')}>
+                        Tên nhóm{sortIndicator('title')}
+                      </button>
+                    </th>
+                    <th>Username</th>
+                    <th className="col-members">
+                      <button type="button" className="groups-th-btn" onClick={() => toggleSort('members')}>
+                        Thành viên{sortIndicator('members')}
+                      </button>
+                    </th>
+                    <th>Telegram ID</th>
+                    <th className="col-actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedGroups.map((group) => {
+                    const isLeaving = leavingId === group.id
+                    return (
+                      <tr key={group.id} className={group.is_channel ? 'groups-row--channel' : 'groups-row--group'}>
                         <td>
-                          <StatusBadge status={group.is_channel ? 'info' : 'active'} />
-                          <span className="muted"> {group.type}</span>
+                          <span
+                            className={`groups-type-badge${group.is_channel ? ' groups-type-badge--channel' : ' groups-type-badge--group'}`}
+                          >
+                            <GroupTypeIcon isChannel={group.is_channel} />
+                            {group.is_channel ? 'Channel' : 'Group'}
+                          </span>
                         </td>
-                        <td>{group.username ? `@${group.username}` : '—'}</td>
-                        <td>{group.members_count || '—'}</td>
                         <td>
-                          {group.link ? (
-                            <a href={group.link} target="_blank" rel="noreferrer">
-                              mở
-                            </a>
+                          <span className="groups-row-title">{group.title || '—'}</span>
+                          <span className="groups-row-sub">{group.type || 'Private'}</span>
+                        </td>
+                        <td>
+                          {group.username ? (
+                            <code className="groups-username">@{group.username}</code>
                           ) : (
-                            '—'
+                            <span className="muted">—</span>
                           )}
                         </td>
+                        <td className="groups-members-cell">{formatMembers(group.members_count)}</td>
+                        <td>
+                          <code className="groups-id">{group.id}</code>
+                        </td>
+                        <td className="cell-actions">
+                          {group.link && (
+                            <a
+                              className="btn btn--sm btn--ghost"
+                              href={group.link}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Mở TG
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn--sm btn--danger"
+                            disabled={actionLoading || isLeaving || !phone}
+                            onClick={() => void handleLeaveRow(group)}
+                          >
+                            {isLeaving ? '…' : 'Rời'}
+                          </button>
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <Pagination
-                page={page}
-                totalPages={totalPages}
-                total={groups.length}
-                from={from}
-                to={to}
-                onPageChange={setPage}
-                pageSize={pageSize}
-                pageSizeOptions={[15, 30, 50]}
-                onPageSizeChange={setPageSize}
-              />
-            </section>
-          )}
-        </>
-      )}
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <Pagination
+              className="pagination--groups"
+              page={page}
+              totalPages={totalPages}
+              total={filteredGroups.length}
+              from={from}
+              to={to}
+              onPageChange={setPage}
+              pageSize={pageSize}
+              pageSizeOptions={[20, 50, 100]}
+              onPageSizeChange={setPageSize}
+            />
+          </>
+        )}
+      </section>
     </div>
   )
 }

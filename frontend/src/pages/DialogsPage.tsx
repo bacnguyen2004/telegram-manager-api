@@ -7,6 +7,8 @@ import { PhoneSelect } from '../components/PhoneSelect'
 import { usePagination } from '../hooks/usePagination'
 import type { DialogCounts, DialogItem, DialogMessageItem } from '../types/api'
 import { avatarHue, dialogInitials, mediaTypeLabel } from '../utils/avatar'
+import { mergeDialogsWithReadState, saveReadState } from '../utils/dialogReadStorage'
+import { inferHasMoreOlder, isStaleMessagesRequest } from '../utils/dialogMessages'
 
 type KindFilter = 'all' | 'private' | 'bot' | 'group' | 'channel'
 
@@ -48,71 +50,6 @@ function countChipClass(kind: keyof DialogCounts | 'all'): string {
     channel: 'chip chip--channel',
   }
   return map[kind] ?? 'chip'
-}
-
-function inferHasMoreOlder(
-  messageCount: number,
-  limit: number,
-  apiValue?: boolean,
-): boolean {
-  if (typeof apiValue === 'boolean') return apiValue
-  return messageCount >= limit
-}
-
-const DIALOG_READ_STORAGE_KEY = 'telegram-manager-dialog-read-v1'
-
-type StoredDialogRead = {
-  readMaxId: number
-  at: number
-}
-
-function loadReadStateMap(phone: string): Record<string, StoredDialogRead> {
-  try {
-    const raw = localStorage.getItem(DIALOG_READ_STORAGE_KEY)
-    if (!raw) return {}
-    const all = JSON.parse(raw) as Record<string, Record<string, StoredDialogRead>>
-    return all[phone] ?? {}
-  } catch {
-    return {}
-  }
-}
-
-function saveReadState(phone: string, dialogId: string, readMaxId: number) {
-  if (!phone || !dialogId || readMaxId <= 0) return
-  try {
-    const raw = localStorage.getItem(DIALOG_READ_STORAGE_KEY)
-    const all = raw
-      ? (JSON.parse(raw) as Record<string, Record<string, StoredDialogRead>>)
-      : {}
-    all[phone] = all[phone] ?? {}
-    all[phone][dialogId] = { readMaxId, at: Date.now() }
-    localStorage.setItem(DIALOG_READ_STORAGE_KEY, JSON.stringify(all))
-  } catch {
-    // Bỏ qua nếu localStorage không khả dụng
-  }
-}
-
-function mergeDialogsWithReadState(phone: string, dialogs: DialogItem[]): DialogItem[] {
-  const stored = loadReadStateMap(phone)
-  return dialogs.map((dialog) => {
-    const local = stored[dialog.id]
-    if (!local) return dialog
-
-    const serverReadMax = dialog.read_inbox_max_id ?? 0
-    const serverLastId = Number(dialog.last_message_id) || 0
-    const caughtUp =
-      local.readMaxId >= serverReadMax &&
-      (serverLastId <= 0 || local.readMaxId >= serverLastId)
-
-    if (caughtUp) {
-      return {
-        ...dialog,
-        unread_count: 0,
-        read_inbox_max_id: Math.max(serverReadMax, local.readMaxId),
-      }
-    }
-    return dialog
-  })
 }
 
 function ChatEmptyIcon() {
@@ -489,10 +426,14 @@ export function DialogsPage() {
     markPartialReadDebounced,
   ])
 
-  const isStaleMessagesRequest = useCallback(
+  const isMessagesRequestStale = useCallback(
     (requestSeq: number, dialogId: string) =>
-      requestSeq !== messagesRequestSeqRef.current ||
-      dialogId !== selectedDialogIdRef.current,
+      isStaleMessagesRequest(
+        requestSeq,
+        dialogId,
+        messagesRequestSeqRef.current,
+        selectedDialogIdRef.current,
+      ),
     [],
   )
 
@@ -518,7 +459,7 @@ export function DialogsPage() {
         MESSAGES_OLDER_LIMIT,
         offsetId,
       )
-      if (isStaleMessagesRequest(requestSeq, dialogId)) return
+      if (isMessagesRequestStale(requestSeq, dialogId)) return
 
       if (!res.success || !res.data) {
         setError(res.error ?? 'Không tải được tin cũ hơn')
@@ -550,17 +491,17 @@ export function DialogsPage() {
       })
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (!container || isStaleMessagesRequest(requestSeq, dialogId)) return
+          if (!container || isMessagesRequestStale(requestSeq, dialogId)) return
           container.scrollTop =
             prevScrollTop + (container.scrollHeight - prevScrollHeight)
         })
       })
     } catch (err) {
-      if (!isStaleMessagesRequest(requestSeq, dialogId)) {
+      if (!isMessagesRequestStale(requestSeq, dialogId)) {
         setError(err instanceof Error ? err.message : 'Không kết nối được API.')
       }
     } finally {
-      if (!isStaleMessagesRequest(requestSeq, dialogId)) {
+      if (!isMessagesRequestStale(requestSeq, dialogId)) {
         setLoadingOlder(false)
         loadingOlderRef.current = false
       }
@@ -571,7 +512,7 @@ export function DialogsPage() {
     messages,
     hasMoreOlder,
     loadingMessages,
-    isStaleMessagesRequest,
+    isMessagesRequestStale,
   ])
 
   const handleMessagesScroll = useCallback(() => {

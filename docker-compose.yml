@@ -18,6 +18,16 @@ services:
       - telegram-locks:/app/runtime/locks
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   telegram-sessions:
   telegram-locks:

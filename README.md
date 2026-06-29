@@ -46,7 +46,7 @@ FastAPI + React dashboard for Telegram via Telethon — sessions, groups, dialog
 
 Lấy `TELEGRAM_API_ID` và `TELEGRAM_API_HASH` tại https://my.telegram.org
 
-### 2. Backend (Docker — khuyến nghị)
+### 2. Full-stack (Docker — khuyến nghị)
 
 ```powershell
 # Từ repo root
@@ -56,8 +56,9 @@ copy backend\.env.example backend\.env
 docker compose up --build
 ```
 
-- Swagger: http://127.0.0.1:8001/docs
-- Health: http://127.0.0.1:8001/api/health
+- **Dashboard:** http://localhost:5173 (nginx + React, proxy `/api` → backend)
+- **Swagger:** http://127.0.0.1:8001/docs
+- **Health:** http://127.0.0.1:8001/api/health
 
 ### 3. Đăng nhập (chưa có session)
 
@@ -77,7 +78,9 @@ docker compose up --build
 docker compose cp backend\runtime\sessions\. api:/app/runtime/sessions/
 ```
 
-### 4. Frontend dashboard
+### 4. Frontend dev (tùy chọn — sửa UI)
+
+Nếu đã chạy Docker full-stack ở bước 2 thì **không cần** bước này.
 
 ```powershell
 cd frontend
@@ -85,7 +88,7 @@ npm install
 npm run dev
 ```
 
-Mở http://localhost:5173 → **Dialogs** → chọn phone → đọc/gửi/reply/ảnh/xóa tin. Cuộn hoặc bấm mũi tên xuống cuối để đánh dấu đã đọc (badge chưa đọc đồng bộ với Telegram).
+Mở http://localhost:5173 → **Dialogs** → chọn phone → đọc/gửi/reply/ảnh/xóa tin.
 
 Proxy `/api` mặc định trỏ `http://127.0.0.1:8001`. Đổi port: tạo `frontend/.env.local` với `VITE_API_PROXY_TARGET=http://127.0.0.1:<port>`.
 
@@ -118,26 +121,36 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ### Chạy test
 
 ```powershell
+# Backend (từ backend/)
 pip install -r requirements-dev.txt
 pytest
+
+# Frontend (từ frontend/)
+npm ci
+npm run test
 ```
 
-Chạy từ thư mục `backend` (sau `venv\Scripts\activate`). CI tự chạy pytest trên mỗi push/PR.
+CI chạy pytest + vitest trên mỗi push/PR.
 
-Test gồm: health, sessions, messages/send, reply, **send-media**, **delete** (mock Telethon), session lock.
+Backend: health, sessions, messages, dialogs (mark-read, pagination), session lock.  
+Frontend: dialog pagination/read-state helpers, stale request guard.
 
 ---
 
 ## Docker
 
 ```powershell
-docker compose up --build    # foreground
+docker compose up --build    # foreground — API + dashboard
 docker compose up -d         # background
 docker compose down
 ```
 
-- API: http://127.0.0.1:8001/docs
-- Session files trong volume `telegram-sessions`
+| Service | URL |
+|---|---|
+| Dashboard (`web`) | http://localhost:5173 |
+| API (`api`) | http://127.0.0.1:8001/docs |
+
+Session files trong volume `telegram-sessions`.
 
 ---
 
