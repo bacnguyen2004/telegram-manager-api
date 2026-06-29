@@ -35,3 +35,33 @@ async def test_get_message_photo_not_found(client, monkeypatch):
     )
 
     assert response.status_code == 404
+
+
+async def test_mark_dialog_read_success(client, monkeypatch):
+    async def mock_mark_dialog_read(phone: str, peer_id: str, max_id: int = 0):
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "read_inbox_max_id": max_id or 999,
+            "unread_count": 0,
+            "message": "OK",
+        }
+
+    monkeypatch.setattr(
+        dialogs.telegram_dialog_service,
+        "mark_dialog_read",
+        mock_mark_dialog_read,
+    )
+
+    response = client.post(
+        "/api/dialogs/%2B84901234567/read",
+        json={"peer_id": "123456789", "max_id": 999},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "success"
+    assert body["data"]["read_inbox_max_id"] == 999
+    assert body["data"]["unread_count"] == 0

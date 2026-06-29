@@ -31,6 +31,7 @@ const apiMap = [
     items: [
       { method: 'GET', path: '/api/dialogs/{phone}', page: '/dialogs' },
       { method: 'GET', path: '/api/dialogs/{phone}/messages', page: '/dialogs' },
+      { method: 'POST', path: '/api/dialogs/{phone}/read', page: '/dialogs' },
       { method: 'GET', path: '/api/dialogs/{phone}/messages/{id}/photo', page: '/dialogs' },
       { method: 'POST', path: '/api/messages/send', page: '/dialogs' },
       { method: 'POST', path: '/api/messages/reply', page: '/dialogs' },

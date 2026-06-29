@@ -3,6 +3,7 @@ import type {
   CheckSessionsData,
   DialogMessagesData,
   DialogsData,
+  MarkDialogReadData,
   SendMessageData,
   GroupActionData,
   GroupsData,
@@ -202,6 +203,16 @@ export const api = {
     })
     return request<DialogMessagesData>(
       `/dialogs/${encodeURIComponent(phone)}/messages?${params}`,
+    )
+  },
+
+  markDialogRead(phone: string, peerId: string, maxId = 0) {
+    return request<MarkDialogReadData>(
+      `/dialogs/${encodeURIComponent(phone)}/read`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ peer_id: peerId, max_id: maxId }),
+      },
     )
   },
 

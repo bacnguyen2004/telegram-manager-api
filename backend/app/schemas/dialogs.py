@@ -59,3 +59,17 @@ class DialogMessagesData(BaseModel):
     total: int
     messages: list[DialogMessageItem]
     message: str = ""
+
+
+class MarkDialogReadRequest(BaseModel):
+    peer_id: str = Field(..., description="Dialog id hoac username")
+    max_id: int = Field(default=0, ge=0, description="Tin nhan cuoi da doc; 0 = doc het")
+
+
+class MarkDialogReadData(BaseModel):
+    status: Literal["success", "error"]
+    phone: str
+    peer_id: str
+    read_inbox_max_id: int = 0
+    unread_count: int = 0
+    message: str = ""

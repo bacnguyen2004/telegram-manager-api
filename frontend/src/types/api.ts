@@ -204,6 +204,15 @@ export interface DialogMessagesData {
   message: string
 }
 
+export interface MarkDialogReadData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  read_inbox_max_id: number
+  unread_count: number
+  message: string
+}
+
 export interface SendMessageData {
   status: 'success' | 'error'
   phone: string

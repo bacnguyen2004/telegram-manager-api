@@ -90,6 +90,9 @@ export function DialogsPage() {
   const openingUnreadRef = useRef(0)
   const openingReadMaxIdRef = useRef(0)
   const prevLoadingMessagesRef = useRef(false)
+  const markReadTimerRef = useRef<number | null>(null)
+  const markPartialTimerRef = useRef<number | null>(null)
+  const markingReadRef = useRef(false)
   const [showJumpBtn, setShowJumpBtn] = useState(false)
   const [pendingUnread, setPendingUnread] = useState(0)
 
@@ -222,15 +225,185 @@ export function DialogsPage() {
     [messages, resolveLastReadMessageId, scrollMessageToBottomOfView, scrollToLatest],
   )
 
+  const syncUnreadBadge = useCallback((remaining: number) => {
+    if (!selected) return
+    const patch = (dialog: DialogItem): DialogItem =>
+      dialog.id === selected.id ? { ...dialog, unread_count: remaining } : dialog
+
+    setDialogs((prev) => prev.map(patch))
+    setSelected((prev) => (prev ? patch(prev) : prev))
+    if (remaining <= 0) openingUnreadRef.current = 0
+  }, [selected])
+
+  const applyDialogReadState = useCallback(
+    (dialogId: string, readMaxId: number, unreadCount = 0) => {
+      const patch = (dialog: DialogItem): DialogItem =>
+        dialog.id === dialogId
+          ? { ...dialog, unread_count: unreadCount, read_inbox_max_id: readMaxId }
+          : dialog
+
+      setDialogs((prev) => prev.map(patch))
+      setSelected((prev) => (prev?.id === dialogId ? patch(prev) : prev))
+      openingReadMaxIdRef.current = readMaxId
+      if (unreadCount <= 0) openingUnreadRef.current = 0
+    },
+    [],
+  )
+
+  const getScrollUnreadState = useCallback(() => {
+    const container = messagesScrollRef.current
+    if (!container || messages.length === 0) {
+      return { remaining: 0, maxVisibleId: openingReadMaxIdRef.current }
+    }
+
+    const containerRect = container.getBoundingClientRect()
+    const readBaseline = openingReadMaxIdRef.current
+    let maxVisibleId = readBaseline
+
+    for (const msg of messages) {
+      const el = messageRefs.current.get(msg.id)
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (rect.bottom > containerRect.top + 8 && rect.top < containerRect.bottom - 8) {
+        if (msg.id > maxVisibleId) maxVisibleId = msg.id
+      }
+    }
+
+    let remainingInLoaded = 0
+    for (const msg of messages) {
+      if (msg.id > maxVisibleId) remainingInLoaded++
+    }
+
+    const openingUnread = openingUnreadRef.current
+    const loadedUnread = messages.filter((msg) => msg.id > readBaseline).length
+
+    let remaining = remainingInLoaded
+    if (openingUnread > loadedUnread) {
+      const readInSession = loadedUnread - remainingInLoaded
+      remaining = Math.max(0, openingUnread - readInSession)
+    } else if (openingUnread > 0) {
+      remaining = Math.min(remaining, openingUnread)
+    }
+
+    return { remaining, maxVisibleId }
+  }, [messages])
+
+  const markAsRead = useCallback(
+    async (maxId?: number) => {
+      if (!phone || !selected || markingReadRef.current) return
+
+      const latestId = messages[messages.length - 1]?.id
+      if (!latestId) return
+
+      const targetId = maxId && maxId > 0 ? maxId : latestId
+      const unread = selected.unread_count ?? 0
+      const readMaxId = selected.read_inbox_max_id ?? 0
+      if (unread <= 0 && readMaxId >= targetId) return
+
+      applyDialogReadState(selected.id, targetId, 0)
+      setPendingUnread(0)
+
+      markingReadRef.current = true
+      try {
+        const res = await api.markDialogRead(phone, selected.id, targetId)
+        if (!res.success || !res.data || res.data.status === 'error') return
+        applyDialogReadState(
+          selected.id,
+          res.data.read_inbox_max_id || targetId,
+          res.data.unread_count ?? 0,
+        )
+      } catch {
+        // UI đã cập nhật optimistic; lần sau có thể chưa đồng bộ Telegram
+      } finally {
+        markingReadRef.current = false
+      }
+    },
+    [phone, selected, messages, applyDialogReadState],
+  )
+
+  const markPartialReadDebounced = useCallback(
+    (maxId: number) => {
+      if (!phone || !selected || maxId <= openingReadMaxIdRef.current) return
+      if (markPartialTimerRef.current) window.clearTimeout(markPartialTimerRef.current)
+      markPartialTimerRef.current = window.setTimeout(() => {
+        void (async () => {
+          if (markingReadRef.current) return
+          markingReadRef.current = true
+          try {
+            const res = await api.markDialogRead(phone, selected.id, maxId)
+            if (res.success && res.data?.status === 'success') {
+              const readMaxId = res.data.read_inbox_max_id || maxId
+              openingReadMaxIdRef.current = readMaxId
+              setDialogs((prev) =>
+                prev.map((dialog) =>
+                  dialog.id === selected.id
+                    ? { ...dialog, read_inbox_max_id: readMaxId }
+                    : dialog,
+                ),
+              )
+              setSelected((prev) =>
+                prev?.id === selected.id
+                  ? { ...prev, read_inbox_max_id: readMaxId }
+                  : prev,
+              )
+            }
+          } catch {
+            // Giữ optimistic badge; thử lại khi cuộn tiếp
+          } finally {
+            markingReadRef.current = false
+          }
+        })()
+      }, 600)
+    },
+    [phone, selected],
+  )
+
+  const markAsReadDebounced = useCallback(() => {
+    if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current)
+    markReadTimerRef.current = window.setTimeout(() => {
+      void markAsRead()
+    }, 400)
+  }, [markAsRead])
+
   const updateJumpButton = useCallback(() => {
     const atBottom = isAtBottom()
     setShowJumpBtn(!atBottom)
-    if (atBottom) setPendingUnread(0)
-  }, [isAtBottom])
+
+    if (!selected || messages.length === 0) return
+
+    if (atBottom) {
+      const latestId = messages[messages.length - 1]?.id ?? 0
+      if (latestId > 0) applyDialogReadState(selected.id, latestId, 0)
+      setPendingUnread(0)
+      markAsReadDebounced()
+      return
+    }
+
+    const { remaining, maxVisibleId } = getScrollUnreadState()
+    setPendingUnread(remaining)
+    syncUnreadBadge(remaining)
+    if (maxVisibleId > openingReadMaxIdRef.current) {
+      markPartialReadDebounced(maxVisibleId)
+    }
+  }, [
+    isAtBottom,
+    selected,
+    messages,
+    applyDialogReadState,
+    syncUnreadBadge,
+    getScrollUnreadState,
+    markAsReadDebounced,
+    markPartialReadDebounced,
+  ])
 
   const handleJumpToLatest = () => {
+    const latestId = messages[messages.length - 1]?.id ?? 0
     scrollToLatest('smooth')
+    if (selected && latestId > 0) {
+      applyDialogReadState(selected.id, latestId, 0)
+    }
     setPendingUnread(0)
+    void markAsRead(latestId)
     window.setTimeout(updateJumpButton, 350)
   }
 
@@ -251,6 +424,13 @@ export function DialogsPage() {
       if (imagePreview) URL.revokeObjectURL(imagePreview)
     }
   }, [imagePreview])
+
+  useEffect(() => {
+    return () => {
+      if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current)
+      if (markPartialTimerRef.current) window.clearTimeout(markPartialTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const justFinished = prevLoadingMessagesRef.current && !loadingMessages
@@ -348,19 +528,20 @@ export function DialogsPage() {
   }
 
   async function handleSelectDialog(dialog: DialogItem) {
-    setSelected(dialog)
+    const fresh = dialogs.find((item) => item.id === dialog.id) ?? dialog
+    setSelected(fresh)
     setDraftText('')
     setReplyTo(null)
     clearSelectedImage()
     resetAlerts()
     setShowJumpBtn(false)
-    openingUnreadRef.current = dialog.unread_count
-    openingReadMaxIdRef.current = dialog.read_inbox_max_id ?? 0
-    setPendingUnread(dialog.unread_count)
+    openingUnreadRef.current = fresh.unread_count
+    openingReadMaxIdRef.current = fresh.read_inbox_max_id ?? 0
+    setPendingUnread(fresh.unread_count)
     scrollIntentRef.current = 'last-read'
-    setMessagesTitle(dialog.title)
+    setMessagesTitle(fresh.title)
     messageRefs.current.clear()
-    await loadMessages(dialog)
+    await loadMessages(fresh)
   }
 
   async function handleDeleteMessage(msg: DialogMessageItem) {

@@ -2,7 +2,12 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from ..schemas.common import ApiEnvelope
-from ..schemas.dialogs import DialogMessagesData, DialogsData
+from ..schemas.dialogs import (
+    DialogMessagesData,
+    DialogsData,
+    MarkDialogReadData,
+    MarkDialogReadRequest,
+)
 from ..services.telegram.dialogs import telegram_dialog_service
 from ..utils.responses import success_response
 
@@ -45,4 +50,15 @@ async def list_dialogs(
 ) -> dict:
     result = await telegram_dialog_service.list_dialogs(phone, limit)
     data = DialogsData(**result)
+    return success_response(data.model_dump())
+
+
+@router.post("/{phone}/read", response_model=ApiEnvelope[MarkDialogReadData])
+async def mark_dialog_read(phone: str, payload: MarkDialogReadRequest) -> dict:
+    result = await telegram_dialog_service.mark_dialog_read(
+        phone,
+        payload.peer_id,
+        payload.max_id,
+    )
+    data = MarkDialogReadData(**result)
     return success_response(data.model_dump())

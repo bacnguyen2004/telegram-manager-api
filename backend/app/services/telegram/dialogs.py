@@ -232,6 +232,67 @@ class TelegramDialogService:
         except Exception as exc:
             return self._messages_error(phone, peer_ref, str(exc))
 
+    async def mark_dialog_read(
+        self,
+        phone: str,
+        peer_id: str,
+        max_id: int = 0,
+    ) -> dict:
+        phone = phone.strip()
+        peer_ref = str(peer_id or "").strip()
+        max_id = max(0, int(max_id or 0))
+
+        if not phone:
+            return self._mark_read_error(phone, peer_ref, "Thieu phone")
+        if not peer_ref:
+            return self._mark_read_error(phone, peer_ref, "Thieu peer_id")
+
+        try:
+            settings.validate_telegram_config()
+        except ValueError as exc:
+            return self._mark_read_error(phone, peer_ref, str(exc))
+
+        session_file = self._session_file(phone)
+        if not session_file.exists():
+            return self._mark_read_error(
+                phone,
+                peer_ref,
+                f"Khong tim thay file session: {session_file}",
+            )
+
+        try:
+            async with telethon_session(
+                phone, self.api_id, self.api_hash, self.session_dir
+            ) as client:
+                if not await client.is_user_authorized():
+                    return self._mark_read_error(
+                        phone,
+                        peer_ref,
+                        "Session chua dang nhap hoac da het han",
+                    )
+
+                entity = await self._resolve_peer(client, peer_ref)
+
+                if max_id <= 0:
+                    latest = await client.get_messages(entity, limit=1)
+                    max_id = int(getattr(latest[0], "id", 0) or 0) if latest else 0
+
+                if max_id > 0:
+                    await client.send_read_acknowledge(entity, max_id=max_id)
+
+                return {
+                    "status": "success",
+                    "phone": phone,
+                    "peer_id": peer_ref,
+                    "read_inbox_max_id": max_id,
+                    "unread_count": 0,
+                    "message": "OK",
+                }
+        except FloodWaitError as exc:
+            return self._mark_read_error(phone, peer_ref, f"Flood wait {exc.seconds}s")
+        except Exception as exc:
+            return self._mark_read_error(phone, peer_ref, str(exc))
+
     async def get_message_photo(
         self,
         phone: str,
@@ -361,6 +422,17 @@ class TelegramDialogService:
             "title": "",
             "total": 0,
             "messages": [],
+            "message": message,
+        }
+
+    @staticmethod
+    def _mark_read_error(phone: str, peer_id: str, message: str) -> dict:
+        return {
+            "status": "error",
+            "phone": phone,
+            "peer_id": peer_id,
+            "read_inbox_max_id": 0,
+            "unread_count": 0,
             "message": message,
         }
 
