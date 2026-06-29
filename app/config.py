@@ -37,3 +37,6 @@ class Settings:
 
 
 settings = Settings()
+
+# Re-export for services that need project root.
+__all__ = ["BASE_DIR", "settings"]
