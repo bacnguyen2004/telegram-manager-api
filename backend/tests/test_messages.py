@@ -135,6 +135,65 @@ async def test_delete_message_success(client, monkeypatch):
     assert data["message_id"] == 55
 
 
+async def test_send_media_success(client, monkeypatch):
+    async def mock_send_media(
+        phone: str,
+        peer_id: str,
+        file_bytes: bytes,
+        filename: str,
+        *,
+        caption: str | None = None,
+        reply_to_msg_id: int | None = None,
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": 77,
+            "reply_to_msg_id": reply_to_msg_id,
+            "message": "Da gui anh",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "send_media",
+        mock_send_media,
+    )
+
+    response = client.post(
+        "/api/messages/send-media",
+        data={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+            "caption": "Xem anh nay",
+            "reply_to_msg_id": "12",
+        },
+        files={"file": ("photo.jpg", b"fake-image-bytes", "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["message_id"] == 77
+    assert data["reply_to_msg_id"] == 12
+
+
+def test_send_media_rejects_non_image(client):
+    response = client.post(
+        "/api/messages/send-media",
+        data={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+        },
+        files={"file": ("doc.pdf", b"%PDF", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "error"
+    assert "JPEG" in data["message"]
+
+
 def test_send_message_validation_empty_text(client):
     response = client.post(
         "/api/messages/send",

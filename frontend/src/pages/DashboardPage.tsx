@@ -33,6 +33,7 @@ const apiMap = [
       { method: 'GET', path: '/api/dialogs/{phone}/messages', page: '/dialogs' },
       { method: 'POST', path: '/api/messages/send', page: '/dialogs' },
       { method: 'POST', path: '/api/messages/reply', page: '/dialogs' },
+      { method: 'POST', path: '/api/messages/send-media', page: '/dialogs' },
       { method: 'DELETE', path: '/api/messages/{id}', page: '/dialogs' },
     ],
   },
@@ -76,7 +77,7 @@ export function DashboardPage() {
       <header className="page-header">
         <div>
           <h1>Tổng quan</h1>
-          <p className="page-desc">Dashboard — 21 API endpoint</p>
+          <p className="page-desc">Dashboard — 22 API endpoint</p>
         </div>
       </header>
 
@@ -101,7 +102,7 @@ export function DashboardPage() {
         </article>
         <article className="stat-card">
           <p className="stat-label">API endpoints</p>
-          <p className="stat-value">21</p>
+          <p className="stat-value">22</p>
         </article>
       </section>
 

@@ -1130,6 +1130,52 @@ a {
   gap: 12px;
 }
 
+.message-compose-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.message-image-input {
+  display: none;
+}
+
+.message-image-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.message-image-preview img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.message-image-preview-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.message-image-preview-meta .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+
+
 @media (max-width: 960px) {
   .app-shell {
     grid-template-columns: 1fr;

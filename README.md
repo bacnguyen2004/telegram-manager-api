@@ -120,7 +120,7 @@ pytest
 
 Chạy từ thư mục `backend` (sau `venv\Scripts\activate`). CI tự chạy pytest trên mỗi push/PR.
 
-Test gồm: health, sessions, messages/send, reply, **delete** (mock Telethon), session lock.
+Test gồm: health, sessions, messages/send, reply, **send-media**, **delete** (mock Telethon), session lock.
 
 ---
 
@@ -177,7 +177,7 @@ Tất cả service dùng helper `telethon_session()` (lock → connect → yield
 
 ---
 
-## API — 21 endpoint
+## API — 22 endpoint
 
 Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 
@@ -225,6 +225,7 @@ Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 | GET | `/api/dialogs/{phone}/messages` | Đọc tin nhắn 1 chat (`?peer_id=&limit=`) |
 | POST | `/api/messages/send` | Gửi tin text (`phone`, `peer_id`, `text`) |
 | POST | `/api/messages/reply` | Trả lời tin (`phone`, `peer_id`, `reply_to_msg_id`, `text`) |
+| POST | `/api/messages/send-media` | Gửi ảnh (`multipart`: `phone`, `peer_id`, `file`, `caption?`, `reply_to_msg_id?`) |
 | DELETE | `/api/messages/{message_id}` | Xóa tin (`?phone=&peer_id=`) |
 
 ---
@@ -253,7 +254,7 @@ app/
 | `/` | Dashboard — bản đồ API |
 | `/sessions` | Quản lý session |
 | `/groups` | Join / leave / list |
-| `/dialogs` | Chat + gửi/reply/xóa tin |
+| `/dialogs` | Chat + gửi/reply/ảnh/xóa tin |
 | `/login`, `/register`, … | Auth flow |
 | `/health` | Health check |
 
@@ -262,8 +263,7 @@ app/
 ## Roadmap
 
 - [x] Auth, sessions, groups, dialogs
-- [x] messages/send, reply, **delete**
+- [x] messages/send, reply, **send-media**, **delete**
 - [x] Session lock, React dashboard
 - [x] pytest, GitHub Actions CI, Docker Compose
-- [ ] media upload (ảnh/file)
 - [ ] Task system (bulk join/send)

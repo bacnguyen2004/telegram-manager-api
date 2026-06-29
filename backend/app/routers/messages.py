@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Form, Query, UploadFile
 
 from ..schemas.common import ApiEnvelope
 from ..schemas.messages import (
@@ -11,6 +11,14 @@ from ..utils.responses import success_response
 
 
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 @router.post("/send", response_model=ApiEnvelope[SendMessageData])
@@ -31,6 +39,46 @@ async def reply_message(payload: ReplyMessageRequest) -> dict:
         payload.peer_id,
         payload.text,
         payload.reply_to_msg_id,
+    )
+    data = SendMessageData(**result)
+    return success_response(data.model_dump())
+
+
+@router.post("/send-media", response_model=ApiEnvelope[SendMessageData])
+async def send_media(
+    phone: str = Form(..., description="So dien thoai session"),
+    peer_id: str = Form(..., description="Dialog id hoac username"),
+    file: UploadFile = File(..., description="Anh (JPEG, PNG, WebP, GIF)"),
+    caption: str = Form("", max_length=1024),
+    reply_to_msg_id: int | None = Form(None, ge=1),
+) -> dict:
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        result = telegram_message_service._error(
+            phone,
+            peer_id,
+            "Chi ho tro anh JPEG, PNG, WebP hoac GIF",
+        )
+        data = SendMessageData(**result)
+        return success_response(data.model_dump())
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_IMAGE_BYTES:
+        result = telegram_message_service._error(
+            phone,
+            peer_id,
+            "Anh toi da 10MB",
+        )
+        data = SendMessageData(**result)
+        return success_response(data.model_dump())
+
+    result = await telegram_message_service.send_media(
+        phone,
+        peer_id,
+        file_bytes,
+        file.filename or "image.jpg",
+        caption=caption,
+        reply_to_msg_id=reply_to_msg_id,
     )
     data = SendMessageData(**result)
     return success_response(data.model_dump())

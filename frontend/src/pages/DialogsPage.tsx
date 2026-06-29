@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { PhoneSelect } from '../components/PhoneSelect'
@@ -42,8 +42,11 @@ export function DialogsPage() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [selectedImage, setSelectedImage] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const imageInputRef = useRef<HTMLInputElement>(null)
 
   const filteredDialogs = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -61,6 +64,38 @@ export function DialogsPage() {
   function resetAlerts() {
     setError('')
     setSuccess('')
+  }
+
+  function clearSelectedImage() {
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
+    setSelectedImage(null)
+    setImagePreview(null)
+    if (imageInputRef.current) imageInputRef.current.value = ''
+  }
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview)
+    }
+  }, [imagePreview])
+
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Chỉ chọn file ảnh (JPEG, PNG, WebP, GIF).')
+      clearSelectedImage()
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Ảnh tối đa 10MB.')
+      clearSelectedImage()
+      return
+    }
+    resetAlerts()
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
+    setSelectedImage(file)
+    setImagePreview(URL.createObjectURL(file))
   }
 
   async function handleLoadDialogs(e: React.FormEvent) {
@@ -124,6 +159,7 @@ export function DialogsPage() {
     setSelected(dialog)
     setDraftText('')
     setReplyTo(null)
+    clearSelectedImage()
     resetAlerts()
     setMessagesTitle(dialog.title)
     await loadMessages(dialog)
@@ -160,16 +196,31 @@ export function DialogsPage() {
     e.preventDefault()
     if (!phone || !selected) return
     const text = draftText.trim()
-    if (!text) return
+    if (!text && !selectedImage) return
 
     setSending(true)
     resetAlerts()
     try {
-      const res = replyTo
-        ? await api.replyMessage(phone, selected.id, replyTo.id, text)
-        : await api.sendMessage(phone, selected.id, text)
+      const res = selectedImage
+        ? await api.sendMedia(
+            phone,
+            selected.id,
+            selectedImage,
+            text || undefined,
+            replyTo?.id,
+          )
+        : replyTo
+          ? await api.replyMessage(phone, selected.id, replyTo.id, text)
+          : await api.sendMessage(phone, selected.id, text)
       if (!res.success || !res.data) {
-        setError(res.error ?? (replyTo ? 'Trả lời thất bại' : 'Gửi tin thất bại'))
+        setError(
+          res.error ??
+            (selectedImage
+              ? 'Gửi ảnh thất bại'
+              : replyTo
+                ? 'Trả lời thất bại'
+                : 'Gửi tin thất bại'),
+        )
         return
       }
       if (res.data.status === 'error') {
@@ -178,6 +229,7 @@ export function DialogsPage() {
       }
       setDraftText('')
       setReplyTo(null)
+      clearSelectedImage()
       setSuccess(res.data.message)
       await loadMessages(selected, false)
     } catch (err) {
@@ -419,32 +471,85 @@ export function DialogsPage() {
                     </button>
                   </div>
                 )}
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="message-image-input"
+                  onChange={handleImageSelect}
+                  disabled={sending || loadingMessages}
+                />
+                {selectedImage && imagePreview && (
+                  <div className="message-image-preview">
+                    <img src={imagePreview} alt={selectedImage.name} />
+                    <div className="message-image-preview-meta">
+                      <span className="muted">{selectedImage.name}</span>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        onClick={clearSelectedImage}
+                        disabled={sending}
+                      >
+                        Bỏ ảnh
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <label className="field message-compose-field">
                   <span>
                     <code>
-                      {replyTo
-                        ? 'POST /api/messages/reply'
-                        : 'POST /api/messages/send'}
+                      {selectedImage
+                        ? 'POST /api/messages/send-media'
+                        : replyTo
+                          ? 'POST /api/messages/reply'
+                          : 'POST /api/messages/send'}
                     </code>
                   </span>
                   <textarea
                     rows={3}
-                    placeholder="Nhập tin nhắn…"
+                    placeholder={
+                      selectedImage
+                        ? 'Caption (tùy chọn)…'
+                        : 'Nhập tin nhắn…'
+                    }
                     value={draftText}
                     onChange={(e) => setDraftText(e.target.value)}
                     disabled={sending || loadingMessages}
-                    maxLength={4096}
-                    required
+                    maxLength={selectedImage ? 1024 : 4096}
                   />
                 </label>
                 <div className="message-compose-actions">
-                  <span className="muted">{draftText.length}/4096</span>
+                  <div className="message-compose-actions-left">
+                    <button
+                      type="button"
+                      className="btn btn--ghost"
+                      onClick={() => imageInputRef.current?.click()}
+                      disabled={sending || loadingMessages}
+                    >
+                      Chọn ảnh
+                    </button>
+                    <span className="muted">
+                      {selectedImage
+                        ? `${draftText.length}/1024`
+                        : `${draftText.length}/4096`}
+                    </span>
+                  </div>
                   <button
                     type="submit"
                     className="btn btn--primary"
-                    disabled={sending || loadingMessages || !draftText.trim()}
+                    disabled={
+                      sending ||
+                      loadingMessages ||
+                      (!draftText.trim() && !selectedImage)
+                    }
                   >
-                    {sending ? 'Đang gửi…' : replyTo ? 'Trả lời' : 'Gửi'}
+                    {sending
+                      ? 'Đang gửi…'
+                      : selectedImage
+                        ? 'Gửi ảnh'
+                        : replyTo
+                          ? 'Trả lời'
+                          : 'Gửi'}
                   </button>
                 </div>
               </form>
