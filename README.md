@@ -1,223 +1,161 @@
 # Telegram Manager
 
-![CI](https://github.com/bacnguyen2004/telegram-manager-api/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/bacnguyen2004/telegram-manager/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-Monorepo **FastAPI + React** — quản lý tài khoản Telegram qua HTTP API và dashboard web. Backend dùng **Telethon**, có **session lock** an toàn khi nhiều request, **Docker Compose** để clone là chạy.
+**Full-stack web app** quản lý tài khoản Telegram qua dashboard và REST API — xây dựng với **FastAPI**, **Telethon**, **React**, **PostgreSQL**.
 
-**Tính năng nổi bật:** đăng nhập OTP/2FA/đăng ký trên một trang `/auth`, chat dialogs (đọc/gửi/reply/ảnh/xóa), đồng bộ trạng thái đã đọc với Telegram, light/dark theme.
+🔗 **Repo:** [github.com/bacnguyen2004/telegram-manager](https://github.com/bacnguyen2004/telegram-manager)
+
+---
+
+## Tổng quan
+
+Monorepo gồm backend API (Telethon/MTProto) và frontend dashboard. Người dùng có thể đăng nhập OTP/2FA, quản lý nhiều session, join/leave nhóm, đọc/gửi tin nhắn (text, ảnh, reply), đồng bộ trạng thái đã đọc với Telegram — tất cả qua giao diện web hoặc Swagger.
 
 ```
-telegram-manager-api/
+telegram-manager/
 ├── backend/     # FastAPI + Telethon (port 8001)
 └── frontend/    # React + Vite (port 5173, proxy /api)
 ```
 
-GitHub: https://github.com/bacnguyen2004/telegram-manager-api
+### Điểm nổi bật (CV / portfolio)
 
----
+- Thiết kế **session lock** hai lớp (`asyncio` + file lock) — an toàn khi nhiều request/worker cùng mở file `.session` Telethon
+- **24 REST endpoint** với response envelope chuẩn, OpenAPI/Swagger tự động
+- Dashboard chat: pagination tin cũ, scroll tới tin đã đọc, badge unread, gửi/reply/ảnh/xóa
+- **PostgreSQL metadata** (SQLModel): login history, group scan, audit log — tách khỏi session Telethon trên disk
+- **Docker Compose** full-stack (API + web + Postgres), CI pytest + vitest trên GitHub Actions
+- Light/dark theme, auth flow thống nhất một trang `/auth`
 
-## GitHub About (copy vào repo Settings)
+### Tech stack
 
-**Description:**
-
-```
-FastAPI + React dashboard for Telegram via Telethon — sessions, groups, dialogs, messaging, read-receipt sync. Docker-ready.
-```
-
-**Topics:** `fastapi` `react` `telethon` `telegram` `typescript` `docker` `vite` `pytest`
+| Layer | Công nghệ |
+|-------|-----------|
+| Backend | Python 3.11, FastAPI, Telethon, SQLModel, Alembic, Pydantic |
+| Frontend | React 19, TypeScript, Vite, React Router |
+| Database | PostgreSQL 16 (production Docker), SQLite (dev local) |
+| DevOps | Docker Compose, nginx, GitHub Actions |
+| Testing | pytest, vitest |
 
 ---
 
 ## Screenshots
 
-| Dashboard — API map | Dialogs — chat UI | Sessions |
-|---|---|---|
+| Dashboard | Dialogs — chat UI | Sessions |
+|-----------|-------------------|----------|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Dialogs](docs/screenshots/dialogs.png) | ![Sessions](docs/screenshots/sessions.png) |
-
-> Ảnh chụp từ dashboard local — thay mới: xem [docs/screenshots/README.md](docs/screenshots/README.md).
 
 ---
 
-## How to demo (clone → chạy)
+## Quick start (Docker)
 
-**Mục tiêu:** người khác clone repo là chạy được trong vài phút.
-
-### 1. Chuẩn bị Telegram API
-
-Lấy `TELEGRAM_API_ID` và `TELEGRAM_API_HASH` tại https://my.telegram.org
-
-### 2. Full-stack (Docker — khuyến nghị)
+**Yêu cầu:** Docker, `TELEGRAM_API_ID` + `TELEGRAM_API_HASH` từ [my.telegram.org](https://my.telegram.org)
 
 ```powershell
 # Từ repo root
 copy backend\.env.example backend\.env
-# Điền TELEGRAM_API_ID + TELEGRAM_API_HASH vào backend\.env
+# Điền TELEGRAM_API_ID + TELEGRAM_API_HASH
 
 docker compose up --build
 ```
 
-- **Dashboard:** http://localhost:5173 (nginx + React, proxy `/api` → backend)
-- **Swagger:** http://127.0.0.1:8001/docs
-- **Health:** http://127.0.0.1:8001/api/health
+| Service | URL |
+|---------|-----|
+| Dashboard | http://localhost:5173 |
+| Swagger API | http://127.0.0.1:8001/docs |
+| Health check | http://127.0.0.1:8001/api/health |
 
-### 3. Đăng nhập (chưa có session)
+### Đăng nhập lần đầu
 
-**Cách 1 — Dashboard (khuyến nghị):** http://localhost:5173/auth
-
-1. Nhập số điện thoại → gửi OTP
-2. Nhập mã → tự chuyển 2FA / đăng ký profile / thành công
-3. Vào **Sessions** — xác nhận có file `.session`
-
-**Cách 2 — Swagger** `/docs`: `send-code` → `login` (hoặc `register`) → `GET /api/sessions`
+1. Mở http://localhost:5173/auth
+2. Nhập số điện thoại → gửi OTP → nhập mã (và 2FA nếu có)
+3. Vào **Sessions** — xác nhận file `.session` đã tạo
 
 > Đăng nhập Telegram trên điện thoại **không** tự tạo session cho API.
 
-**Copy session vào Docker** (nếu đăng nhập local trước đó):
+---
 
-```powershell
-docker compose cp backend\runtime\sessions\. api:/app/runtime/sessions/
-```
+## Tính năng
 
-### 4. Frontend dev (tùy chọn — sửa UI)
-
-Nếu đã chạy Docker full-stack ở bước 2 thì **không cần** bước này.
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-Mở http://localhost:5173 → **Dialogs** → chọn phone → đọc/gửi/reply/ảnh/xóa tin.
-
-Proxy `/api` mặc định trỏ `http://127.0.0.1:8001`. Đổi port: tạo `frontend/.env.local` với `VITE_API_PROXY_TARGET=http://127.0.0.1:<port>`.
+| Module | Mô tả |
+|--------|-------|
+| **Auth** | OTP, 2FA, đăng ký tài khoản mới, đổi 2FA, privacy invite |
+| **Sessions** | Liệt kê, kiểm tra live, chi tiết file + DB metadata, xóa |
+| **Groups** | Join/leave nhóm & channel, leave-all, danh sách nhóm |
+| **Dialogs** | Danh sách chat, đọc tin, mark-read, tải ảnh thumbnail |
+| **Messages** | Gửi text, reply, gửi ảnh (multipart), xóa tin |
+| **Health** | Trạng thái backend, Telegram config, database, session dir |
 
 ---
 
-## Yêu cầu
+## Kiến trúc
 
-- Python 3.11+ (dev local) hoặc Docker
-- Node.js 18+ (frontend)
-- `TELEGRAM_API_ID` + `TELEGRAM_API_HASH`
+### Backend
 
----
-
-## Backend (dev local)
-
-```powershell
-cd backend
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
+```
+app/
+├── main.py                 # FastAPI lifespan, router mount
+├── config.py               # Settings + session_lock singleton
+├── db/                     # SQLModel metadata (session_meta, group_scans, audit_logs)
+├── routers/                # HTTP layer (health, auth, sessions, groups, dialogs, messages)
+├── schemas/                # Pydantic request/response
+├── services/telegram/      # Telethon business logic
+│   └── client.py           # telethon_session() — lock → connect → yield → disconnect
+└── utils/
+    ├── session_lock.py     # Per-phone asyncio + file lock
+    └── responses.py        # { success, data, error } envelope
 ```
 
-Điền `.env` (xem **Biến môi trường**).
+### Session lock
 
-```powershell
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
-```
-
-### Chạy test
-
-```powershell
-# Backend (từ backend/)
-pip install -r requirements-dev.txt
-pytest
-
-# Frontend (từ frontend/)
-npm ci
-npm run test
-```
-
-CI chạy pytest + vitest trên mỗi push/PR.
-
-Backend: health, sessions, messages, dialogs (mark-read, pagination), session lock.  
-Frontend: dialog pagination/read-state helpers, stale request guard.
-
----
-
-## Docker
-
-```powershell
-docker compose up --build    # foreground — API + dashboard
-docker compose up -d         # background
-docker compose down
-```
-
-| Service | URL |
-|---|---|
-| Dashboard (`web`) | http://localhost:5173 |
-| API (`api`) | http://127.0.0.1:8001/docs |
-
-Session files trong volume `telegram-sessions`.
-
----
-
-## Frontend
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-Mở http://localhost:5173 — Vite proxy `/api` → backend (mặc định port **8001**).
-
----
-
-## Biến môi trường (backend `.env`)
-
-| Biến | Mô tả | Mặc định |
-|---|---|---|
-| `TELEGRAM_API_ID` | API ID từ my.telegram.org | — |
-| `TELEGRAM_API_HASH` | API hash | — |
-| `SESSION_FOLDER` | Thư mục file `.session` | `runtime/sessions` |
-| `SESSION_LOCK_DIR` | Thư mục file lock | `runtime/locks` |
-| `TG_SESSION_LOCK_TIMEOUT` | Chờ lock tối đa (giây) | `120` |
-| `TG_SESSION_LOCK_STALE_SECONDS` | Xóa lock file cũ (crash) | `300` |
-
----
-
-## Session lock
-
-Mỗi tài khoản (`phone`) map tới một file `.session` (SQLite). Telethon **không an toàn** khi nhiều request mở cùng file song song.
-
-**Giải pháp:** `session_lock` — mỗi phone chỉ một kết nối Telethon tại một thời điểm.
+Mỗi `phone` map tới một file `.session` (SQLite). Telethon không an toàn khi concurrent — giải pháp:
 
 | Lớp | Phạm vi |
-|---|---|
-| `asyncio.Lock` | Nhiều request trong cùng process FastAPI |
+|-----|---------|
+| `asyncio.Lock` | Nhiều request trong cùng process |
 | File `runtime/locks/{phone}.lock` | Nhiều process / worker |
 
-Tất cả service dùng helper `telethon_session()` (lock → connect → yield client → disconnect → release).
+### Frontend routes
+
+| Route | Trang |
+|-------|-------|
+| `/` | Dashboard — bản đồ API |
+| `/auth` | Đăng nhập thống nhất (OTP → 2FA / đăng ký) |
+| `/sessions` | Quản lý session |
+| `/dialogs` | Chat workspace |
+| `/groups` | Join / leave / list nhóm |
+| `/security` | 2FA, privacy |
+| `/health` | Health check |
 
 ---
 
-## API — 24 endpoint
+## API (24 endpoints)
 
 Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 
-### Health
+<details>
+<summary><strong>Health & Sessions</strong></summary>
 
 | Method | Endpoint | Mô tả |
-|---|---|---|
-| GET | `/api/health` | Trạng thái backend, Telegram config, session dir |
-
-### Sessions
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| GET | `/api/sessions` | Liệt kê session (file `.session` trên disk) |
+|--------|----------|-------|
+| GET | `/api/health` | Trạng thái hệ thống |
+| GET | `/api/sessions` | Liệt kê session trên disk |
 | POST | `/api/sessions/check` | Kiểm tra live/unauthorized |
-| GET | `/api/sessions/{phone}` | Chi tiết 1 session |
-| DELETE | `/api/sessions/{phone}` | Xóa session file |
+| GET | `/api/sessions/{phone}` | Chi tiết + `db_metadata` |
+| DELETE | `/api/sessions/{phone}` | Xóa session |
 | GET | `/api/sessions/{phone}/me` | Thông tin tài khoản Telegram |
 
-### Auth
+</details>
+
+<details>
+<summary><strong>Auth</strong></summary>
 
 | Method | Endpoint | Mô tả |
-|---|---|---|
+|--------|----------|-------|
 | POST | `/api/auth/send-code` | Gửi OTP |
 | POST | `/api/auth/login` | Đăng nhập (+ 2FA) |
 | POST | `/api/auth/register` | Đăng ký mới |
@@ -225,69 +163,118 @@ Response chuẩn: `{ "success": true|false, "data": ..., "error": null|"..." }`
 | PUT | `/api/auth/2fa` | Đổi mật khẩu 2FA |
 | PUT | `/api/auth/privacy` | Cài privacy invite |
 
-### Groups
+</details>
+
+<details>
+<summary><strong>Groups, Dialogs & Messages</strong></summary>
 
 | Method | Endpoint | Mô tả |
-|---|---|---|
+|--------|----------|-------|
 | POST | `/api/groups/join` | Join nhóm/channel |
 | POST | `/api/groups/leave` | Rời 1 nhóm |
-| POST | `/api/groups/leave-all` | Rời tất cả nhóm/channel |
-| GET | `/api/groups/{phone}` | Danh sách nhóm đã join |
+| POST | `/api/groups/leave-all` | Rời tất cả |
+| GET | `/api/groups/{phone}` | Danh sách nhóm |
+| GET | `/api/dialogs/{phone}` | Tất cả chat + `read_inbox_max_id` |
+| GET | `/api/dialogs/{phone}/messages` | Đọc tin (`peer_id`, `limit`, `offset_id`) |
+| POST | `/api/dialogs/{phone}/read` | Đánh dấu đã đọc |
+| GET | `/api/dialogs/{phone}/messages/{id}/photo` | Thumbnail ảnh |
+| POST | `/api/messages/send` | Gửi text |
+| POST | `/api/messages/reply` | Trả lời tin |
+| POST | `/api/messages/send-media` | Gửi ảnh (multipart) |
+| DELETE | `/api/messages/{message_id}` | Xóa tin |
 
-### Dialogs & Messages
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| GET | `/api/dialogs/{phone}` | Tất cả chat (private, bot, group, channel) + `read_inbox_max_id` |
-| GET | `/api/dialogs/{phone}/messages` | Đọc tin nhắn 1 chat (`?peer_id=&limit=`) |
-| POST | `/api/dialogs/{phone}/read` | Đánh dấu đã đọc (`peer_id`, `max_id?`) — Telethon `send_read_acknowledge` |
-| GET | `/api/dialogs/{phone}/messages/{message_id}/photo` | Thumbnail ảnh tin nhắn (`?peer_id=`) |
-| POST | `/api/messages/send` | Gửi tin text (`phone`, `peer_id`, `text`) |
-| POST | `/api/messages/reply` | Trả lời tin (`phone`, `peer_id`, `reply_to_msg_id`, `text`) |
-| POST | `/api/messages/send-media` | Gửi ảnh (`multipart`: `phone`, `peer_id`, `file`, `caption?`, `reply_to_msg_id?`) |
-| DELETE | `/api/messages/{message_id}` | Xóa tin (`?phone=&peer_id=`) |
+</details>
 
 ---
 
-## Kiến trúc backend
+## Dev local
 
+### Backend
+
+```powershell
+cd backend
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
-app/
-├── main.py
-├── config.py              # settings + session_lock singleton
-├── routers/               # HTTP layer
-├── schemas/               # Pydantic request/response
-├── services/telegram/     # Telethon logic
-│   └── client.py          # telethon_session() — lock + connect
-└── utils/
-    ├── responses.py       # envelope { success, data, error }
-    └── session_lock.py    # per-phone file lock
+
+### Frontend
+
+```powershell
+cd frontend
+npm install
+npm run dev
 ```
+
+Proxy `/api` → `http://127.0.0.1:8001`. Đổi port: `frontend/.env.local` với `VITE_API_PROXY_TARGET`.
+
+### Tests
+
+```powershell
+# Backend
+cd backend
+pip install -r requirements-dev.txt
+pytest
+
+# Frontend
+cd frontend
+npm ci
+npm run test
+```
+
+CI chạy pytest + vitest + frontend build trên mỗi push/PR tới `main`.
 
 ---
 
-## Frontend pages
+## Biến môi trường
 
-| Route | Trang |
-|---|---|
-| `/` | Dashboard — bản đồ API + quick links |
-| `/sessions` | Quản lý session |
-| `/groups` | Join / leave / list |
-| `/dialogs` | Chat workspace — scroll tới tin đã đọc, jump xuống cuối, badge unread |
-| `/auth` | Đăng nhập thống nhất (OTP → 2FA / đăng ký / thành công) |
-| `/security` | Đổi 2FA, privacy |
-| `/health` | Health check |
+| Biến | Mô tả | Mặc định |
+|------|-------|----------|
+| `TELEGRAM_API_ID` | API ID từ my.telegram.org | — |
+| `TELEGRAM_API_HASH` | API hash | — |
+| `SESSION_FOLDER` | Thư mục file `.session` | `runtime/sessions` |
+| `SESSION_LOCK_DIR` | Thư mục file lock | `runtime/locks` |
+| `TG_SESSION_LOCK_TIMEOUT` | Chờ lock tối đa (giây) | `120` |
+| `TG_SESSION_LOCK_STALE_SECONDS` | Xóa lock cũ sau crash (giây) | `300` |
+| `DATABASE_URL` | PostgreSQL hoặc SQLite | SQLite local |
+| `DATABASE_ENABLED` | Bật/tắt metadata DB | `true` |
 
-Các route cũ `/login`, `/register`, `/send-code` redirect về `/auth`.
+Chi tiết 3 cách cấu hình DB (SQLite local / Postgres dev / Docker full): xem `backend/.env.example`.
+
+---
+
+## Docker services
+
+```powershell
+docker compose up --build    # foreground
+docker compose up -d         # background
+docker compose down
+```
+
+| Service | Port | Mô tả |
+|---------|------|-------|
+| `web` | 5173 | nginx + React build |
+| `api` | 8001 | FastAPI |
+| `db` | 5433 → 5432 | PostgreSQL (`telegram` / `telegram` / `telegram_manager`) |
+
+Volumes: `telegram-sessions`, `telegram-locks`, `postgres-data`.
 
 ---
 
 ## Roadmap
 
-- [x] Auth (OTP, 2FA, `need_signup`, unified `/auth` UI)
-- [x] Sessions, groups, dialogs
-- [x] messages/send, reply, **send-media**, **delete**
-- [x] Dialog read sync (`read_inbox_max_id`, mark-read API, unread badges)
-- [x] Session lock, React dashboard, light/dark theme
+- [x] Auth, sessions, groups, dialogs, messaging (text/reply/media/delete)
+- [x] Dialog read sync, session lock, light/dark theme
 - [x] pytest, GitHub Actions CI, Docker Compose
+- [x] PostgreSQL metadata (login, group scan, audit log)
 - [ ] Task system (bulk join/send)
+
+---
+
+## Author
+
+[bacnguyen2004](https://github.com/bacnguyen2004)
+
+Dự án demo kỹ năng **full-stack**, **API design**, **Telegram integration**, **Docker**, và **automated testing**.

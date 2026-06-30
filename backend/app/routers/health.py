@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from ..config import settings
+from ..db.engine import ping_database
 from ..schemas.common import ApiEnvelope
 from ..schemas.health import HealthData
 from ..utils.responses import success_response
@@ -29,6 +30,12 @@ def get_health_status() -> dict:
 
     telegram_configured = bool(settings.telegram_api_id and settings.telegram_api_hash)
 
+    database_enabled = settings.database_enabled
+    database_ok = False
+    database_message = "Database disabled"
+    if database_enabled:
+        database_ok, database_message = ping_database()
+
     session_count = 0
     if session_dir_exists:
         session_count = len(list(session_dir.glob("*.session")))
@@ -38,6 +45,8 @@ def get_health_status() -> dict:
         issues.append("Thieu TELEGRAM_API_ID hoac TELEGRAM_API_HASH")
     if not session_dir_writable:
         issues.append("Khong ghi duoc vao thu muc session")
+    if database_enabled and not database_ok:
+        issues.append(f"Database: {database_message}")
 
     status = "ok" if not issues else "degraded"
     message = "OK" if not issues else "; ".join(issues)
@@ -46,6 +55,9 @@ def get_health_status() -> dict:
         "status": status,
         "app": settings.app_name,
         "telegram_configured": telegram_configured,
+        "database_enabled": database_enabled,
+        "database_ok": database_ok,
+        "database_message": database_message,
         "session_dir": str(session_dir),
         "session_dir_exists": session_dir_exists,
         "session_dir_writable": session_dir_writable,

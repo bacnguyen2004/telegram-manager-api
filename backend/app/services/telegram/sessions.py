@@ -6,6 +6,7 @@ from pathlib import Path
 from telethon.errors import FloodWaitError
 
 from ...config import BASE_DIR, session_lock, settings
+from ...db import metadata_store
 from .client import telethon_session
 
 
@@ -57,6 +58,7 @@ class TelegramSessionService:
 
         stat = session_file.stat()
         modified_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+        db_metadata = metadata_store.get_session_snapshot(phone)
 
         return self._detail_result(
             "success",
@@ -67,6 +69,7 @@ class TelegramSessionService:
             modified_at=modified_at,
             has_journal=journal_file.exists(),
             message="OK",
+            db_metadata=db_metadata,
         )
 
     async def delete_session(self, phone: str) -> dict:
@@ -99,6 +102,15 @@ class TelegramSessionService:
                 pending_auth_cleared = pending_auth_file.exists()
                 if pending_auth_cleared:
                     pending_auth_file.unlink()
+
+                metadata_store.record_audit(
+                    phone,
+                    action="sessions.delete",
+                    resource=phone,
+                    status="success",
+                    detail={"deleted_files": deleted_files},
+                )
+                metadata_store.remove_session_meta(phone)
 
                 return self._delete_result(
                     "success",
@@ -242,8 +254,9 @@ class TelegramSessionService:
         modified_at: str | None = None,
         has_journal: bool = False,
         message: str,
+        db_metadata: dict | None = None,
     ) -> dict:
-        return {
+        payload = {
             "status": status,
             "phone": phone,
             "exists": exists,
@@ -253,6 +266,9 @@ class TelegramSessionService:
             "has_journal": has_journal,
             "message": message,
         }
+        if db_metadata is not None:
+            payload["db_metadata"] = db_metadata
+        return payload
 
     @staticmethod
     def _delete_result(

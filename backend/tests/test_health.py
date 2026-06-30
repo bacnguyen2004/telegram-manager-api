@@ -7,9 +7,11 @@ def test_health_returns_envelope(client):
     assert body["error"] is None
 
     data = body["data"]
-    assert data["app"] == "Telegram Manager API"
+    assert data["app"] == "Telegram Manager"
     assert data["status"] in {"ok", "degraded"}
     assert data["telegram_configured"] is True
+    assert data["database_enabled"] is True
+    assert data["database_ok"] is True
     assert data["session_dir_exists"] is True
     assert data["session_dir_writable"] is True
     assert isinstance(data["session_count"], int)

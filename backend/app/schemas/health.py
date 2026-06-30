@@ -7,6 +7,9 @@ class HealthData(BaseModel):
     status: Literal["ok", "degraded"]
     app: str
     telegram_configured: bool
+    database_enabled: bool
+    database_ok: bool
+    database_message: str = ""
     session_dir: str
     session_dir_exists: bool
     session_dir_writable: bool

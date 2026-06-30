@@ -16,7 +16,7 @@ def resolve_project_path(value: str) -> Path:
 
 
 class Settings:
-    app_name: str = "Telegram Manager API"
+    app_name: str = "Telegram Manager"
     api_prefix: str = "/api"
 
     telegram_api_id: int = int(os.getenv("TELEGRAM_API_ID", "0") or 0)
@@ -33,6 +33,16 @@ class Settings:
     session_lock_stale_seconds: float = float(
         os.getenv("TG_SESSION_LOCK_STALE_SECONDS", "300") or 300
     )
+
+    database_url: str = os.getenv(
+        "DATABASE_URL",
+        f"sqlite:///{(BASE_DIR / 'runtime' / 'telegram_manager.db').as_posix()}",
+    )
+    database_enabled: bool = os.getenv("DATABASE_ENABLED", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
 
     def validate_telegram_config(self) -> None:
         if not self.telegram_api_id or not self.telegram_api_hash:

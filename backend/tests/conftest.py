@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import session_lock, settings
+from app.db import init_db, reset_engine
 from app.main import app
 from app.services.telegram import auth, dialogs, groups, messages, sessions
 
@@ -27,6 +28,12 @@ def test_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "session_dir", session_dir)
     monkeypatch.setattr(settings, "session_lock_dir", lock_dir)
     monkeypatch.setattr(session_lock, "lock_dir", lock_dir)
+
+    db_file = tmp_path / "test.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{db_file.as_posix()}")
+    monkeypatch.setattr(settings, "database_enabled", True)
+    reset_engine()
+    init_db()
 
     for service in TELEGRAM_SERVICES:
         monkeypatch.setattr(service, "session_dir", session_dir)

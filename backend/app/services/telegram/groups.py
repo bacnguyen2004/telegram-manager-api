@@ -12,6 +12,7 @@ from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelReque
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from ...config import settings
+from ...db import metadata_store
 from .client import telethon_session
 
 
@@ -73,19 +74,23 @@ class TelegramGroupService:
                 else:
                     await client(JoinChannelRequest(group_link))
 
-                return self._action_result(
+                result = self._action_result(
                     "success",
                     phone,
                     group_link,
                     "Tham gia nhom thanh cong",
                 )
+                self._audit_group_action(phone, "groups.join", group_link, result["status"])
+                return result
         except UserAlreadyParticipantError:
-            return self._action_result(
+            result = self._action_result(
                 "info",
                 phone,
                 group_link,
                 "Da join nhom roi",
             )
+            self._audit_group_action(phone, "groups.join", group_link, result["status"])
+            return result
         except ChannelsTooMuchError:
             return self._action_result(
                 "error",
@@ -153,21 +158,27 @@ class TelegramGroupService:
 
                 peer = await client.get_entity(group_ref)
                 await client(LeaveChannelRequest(peer))
-                return self._action_result(
+                result = self._action_result(
                     "success",
                     phone,
                     group_link,
                     "Da roi nhom",
                 )
+                self._audit_group_action(phone, "groups.leave", group_link, result["status"])
+                return result
         except FloodWaitError as exc:
-            return self._action_result(
+            result = self._action_result(
                 "error",
                 phone,
                 group_link,
                 f"Flood wait {exc.seconds}s",
             )
+            self._audit_group_action(phone, "groups.leave", group_link, result["status"])
+            return result
         except Exception as exc:
-            return self._action_result("error", phone, group_link, str(exc))
+            result = self._action_result("error", phone, group_link, str(exc))
+            self._audit_group_action(phone, "groups.leave", group_link, result["status"])
+            return result
 
     async def leave_all_groups(self, phone: str) -> dict:
         phone = phone.strip()
@@ -214,21 +225,43 @@ class TelegramGroupService:
                     except Exception:
                         continue
 
-                return self._leave_all_result(
+                result = self._leave_all_result(
                     "success",
                     phone,
                     left_count,
                     f"Da roi {left_count} nhom/channel",
                 )
+                metadata_store.record_audit(
+                    phone,
+                    action="groups.leave_all",
+                    resource=phone,
+                    status=result["status"],
+                    detail={"left_count": left_count},
+                )
+                return result
         except FloodWaitError as exc:
-            return self._leave_all_result(
+            result = self._leave_all_result(
                 "error",
                 phone,
                 0,
                 f"Flood wait {exc.seconds}s",
             )
+            metadata_store.record_audit(
+                phone,
+                action="groups.leave_all",
+                resource=phone,
+                status=result["status"],
+            )
+            return result
         except Exception as exc:
-            return self._leave_all_result("error", phone, 0, str(exc))
+            result = self._leave_all_result("error", phone, 0, str(exc))
+            metadata_store.record_audit(
+                phone,
+                action="groups.leave_all",
+                resource=phone,
+                status=result["status"],
+            )
+            return result
 
     async def list_groups(self, phone: str, limit: int = 1000) -> dict:
         phone = phone.strip()
@@ -298,6 +331,7 @@ class TelegramGroupService:
                     )
 
                 groups.sort(key=lambda item: (item.get("title") or "").lower())
+                metadata_store.record_group_scan(phone, groups)
                 return {
                     "status": "success",
                     "phone": phone,
@@ -324,6 +358,20 @@ class TelegramGroupService:
 
     def _session_file(self, phone: str) -> Path:
         return (self.session_dir / phone).with_suffix(".session")
+
+    @staticmethod
+    def _audit_group_action(
+        phone: str,
+        action: str,
+        group_link: str,
+        status: str,
+    ) -> None:
+        metadata_store.record_audit(
+            phone,
+            action=action,
+            resource=group_link,
+            status=status,
+        )
 
     @staticmethod
     def _leave_all_result(

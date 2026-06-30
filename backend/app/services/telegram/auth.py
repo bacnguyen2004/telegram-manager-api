@@ -25,6 +25,7 @@ from telethon.tl.types import (
 )
 
 from ...config import BASE_DIR, settings
+from ...db import metadata_store
 from .client import telethon_session
 
 
@@ -102,7 +103,9 @@ class TelegramAuthService:
                 if await client.is_user_authorized():
                     me = await client.get_me()
                     self._clear_pending_auth(phone)
-                    return self._success_result(phone, session_file, me)
+                    result = self._success_result(phone, session_file, me)
+                    self._persist_login(phone, me)
+                    return result
 
                 if password and not code:
                     await client.sign_in(password=password)
@@ -133,7 +136,9 @@ class TelegramAuthService:
 
                 me = await client.get_me()
                 self._clear_pending_auth(phone)
-                return self._success_result(phone, session_file, me)
+                result = self._success_result(phone, session_file, me)
+                self._persist_login(phone, me)
+                return result
         except PhoneNumberUnoccupiedError:
             return self._result(
                 "need_signup",
@@ -197,7 +202,9 @@ class TelegramAuthService:
                 if await client.is_user_authorized():
                     me = await client.get_me()
                     self._clear_pending_auth(phone)
-                    return self._success_result(phone, session_file, me)
+                    result = self._success_result(phone, session_file, me)
+                    self._persist_login(phone, me)
+                    return result
 
                 result = await client(
                     SignUpRequest(
@@ -216,12 +223,14 @@ class TelegramAuthService:
                 await client._on_login(result.user)
                 me = await client.get_me()
                 self._clear_pending_auth(phone)
-                return self._success_result(
+                result = self._success_result(
                     phone,
                     session_file,
                     me,
                     message="Dang ky thanh cong, da tao file .session",
                 )
+                self._persist_login(phone, me)
+                return result
         except PhoneCodeInvalidError:
             return self._result("error", "Ma OTP khong hop le", phone)
         except PhoneCodeExpiredError:
@@ -435,6 +444,16 @@ class TelegramAuthService:
     def _clear_pending_auth(self, phone: str) -> None:
         path = self._pending_auth_path(phone)
         path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _persist_login(phone: str, me) -> None:
+        metadata_store.record_login(
+            phone,
+            telegram_user_id=getattr(me, "id", None),
+            username=getattr(me, "username", None),
+            first_name=getattr(me, "first_name", None),
+            last_name=getattr(me, "last_name", None),
+        )
 
     @staticmethod
     def _result(status: str, message: str, phone: str) -> dict:

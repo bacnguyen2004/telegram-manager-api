@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config import settings
+from .db import init_db
 from .routers import api_router
 from .utils.exceptions import register_exception_handlers
 
@@ -18,6 +19,7 @@ SETUP_STEPS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_runtime_dirs()
+    init_db()
     yield
 
 

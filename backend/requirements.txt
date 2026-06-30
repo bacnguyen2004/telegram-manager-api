@@ -3,3 +3,5 @@ uvicorn[standard]==0.34.0
 telethon==1.36.0
 python-dotenv==1.0.1
 python-multipart==0.0.20
+sqlmodel==0.0.22
+psycopg2-binary==2.9.10
