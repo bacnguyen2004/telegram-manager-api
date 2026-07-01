@@ -41,7 +41,9 @@ function pageTitle(pathname: string): string {
     '/auth': 'Tài khoản',
     '/security': 'Bảo mật',
   }
-  return map[pathname] ?? 'Telegram Manager'
+  if (map[pathname]) return map[pathname]
+  const base = `/${pathname.split('/').filter(Boolean)[0] ?? ''}`
+  return map[base] ?? 'Telegram Manager'
 }
 
 export function Layout() {
