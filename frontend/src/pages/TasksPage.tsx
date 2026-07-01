@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { StatusBadge } from '../components/StatusBadge'
-import type { CheckSessionItem } from '../types/api'
+import type { CheckSessionItem, PollInfoData, PollOptionItem } from '../types/api'
 import { DEFAULT_QUICK_REACTIONS } from '../utils/reactions'
 import {
   actionsForGroup,
@@ -37,6 +37,50 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function pollOptionVoteKey(option: PollOptionItem): string {
+  if (option.option_hex) return option.option_hex
+  if (option.todo_item_id != null) return String(option.todo_item_id)
+  return String(option.index)
+}
+
+function pollWarnings(info: PollInfoData): string[] {
+  const warnings: string[] = []
+  if (info.closed) warnings.push('Poll đã đóng — không vote được.')
+  if (info.shuffle_answers) {
+    warnings.push(
+      'Poll xáo thứ tự — chọn theo tên đáp án trên tool, không theo vị trí trên Telegram.',
+    )
+  }
+  if (info.open_answers) {
+    warnings.push(
+      'Cho phép thêm đáp án — danh sách có thể đổi; bấm Tải lại trước khi chạy nếu cần.',
+    )
+  }
+  if (info.multiple_choice) {
+    warnings.push('Cho phép nhiều đáp án — có thể chọn nhiều mục cùng lúc.')
+  }
+  if (!info.revoting_allowed) {
+    warnings.push('Không cho vote lại — acc đã vote trước đó sẽ báo lỗi.')
+  }
+  if (info.close_date) {
+    warnings.push(
+      `Tự đóng lúc ${new Date(info.close_date).toLocaleString('vi-VN')}.`,
+    )
+  }
+  return warnings
+}
+
+function pollCancelWarnings(info: PollInfoData): string[] {
+  const warnings: string[] = []
+  if (info.closed) warnings.push('Poll đã đóng.')
+  if (info.kind === 'poll' && !info.revoting_allowed) {
+    warnings.push('Poll không cho phép hủy hoặc đổi vote.')
+  }
+  return warnings
+}
+
+type TodoCancelMode = 'all' | 'pick'
+
 export function TasksPage() {
   const [sessions, setSessions] = useState<string[]>([])
   const [checkResults, setCheckResults] = useState<CheckSessionItem[]>([])
@@ -62,6 +106,15 @@ export function TasksPage() {
   const [progress, setProgress] = useState<TaskProgressRow[]>([])
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [pollInfo, setPollInfo] = useState<PollInfoData | null>(null)
+  const [pollLoading, setPollLoading] = useState(false)
+  const [pollError, setPollError] = useState('')
+  const [selectedVoteKeys, setSelectedVoteKeys] = useState<string[]>([])
+  const [pollReloadKey, setPollReloadKey] = useState(0)
+  const [pollAddOptionLabel, setPollAddOptionLabel] = useState('')
+  const [pollAddOptionOnRun, setPollAddOptionOnRun] = useState(false)
+  const [pollAddOptionLoading, setPollAddOptionLoading] = useState(false)
+  const [todoCancelMode, setTodoCancelMode] = useState<TodoCancelMode>('all')
   const abortRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -86,6 +139,104 @@ export function TasksPage() {
   const selectedList = useMemo(
     () => sessions.filter((phone) => selectedPhones.has(phone)),
     [sessions, selectedPhones],
+  )
+
+  const pollPreviewPhone = selectedList[0] ?? sessions[0] ?? ''
+
+  useEffect(() => {
+    if (action === 'cancel-vote-poll') {
+      setTodoCancelMode('all')
+    }
+  }, [action])
+
+  useEffect(() => {
+    if (action !== 'vote-poll' && action !== 'cancel-vote-poll') {
+      setPollInfo(null)
+      setPollError('')
+      setPollLoading(false)
+      setSelectedVoteKeys([])
+      return
+    }
+
+    if (!pollPreviewPhone) {
+      setPollInfo(null)
+      setPollError('Chọn ít nhất một tài khoản để tải poll')
+      setPollLoading(false)
+      return
+    }
+
+    if (parsedLink.kind !== 'post' || !parsedLink.messageId) {
+      setPollInfo(null)
+      setPollError('')
+      setPollLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPollLoading(true)
+    setPollError('')
+    setSelectedVoteKeys([])
+
+    void (async () => {
+      try {
+        const res = await api.getPollInfo(
+          pollPreviewPhone,
+          parsedLink.peerId,
+          parsedLink.messageId!,
+          targetLink.trim() || parsedLink.raw || parsedLink.cleanLink,
+        )
+        if (cancelled) return
+        if (!res.success || !res.data) {
+          setPollInfo(null)
+          setPollError(res.error ?? 'Không tải được poll')
+          return
+        }
+        if (res.data.status === 'error') {
+          setPollInfo(null)
+          setPollError(res.data.message)
+          return
+        }
+        setPollInfo(res.data)
+        if (action === 'vote-poll' && res.data.suggested_option_index) {
+          const suggested = res.data.options.find(
+            (option) => option.index === res.data!.suggested_option_index,
+          )
+          if (suggested) {
+            setSelectedVoteKeys([pollOptionVoteKey(suggested)])
+          }
+        } else if (action === 'cancel-vote-poll' && res.data.kind === 'poll') {
+          setSelectedVoteKeys([])
+        }
+      } catch (err) {
+        if (cancelled) return
+        setPollInfo(null)
+        setPollError(err instanceof Error ? err.message : 'Không tải được poll')
+      } finally {
+        if (!cancelled) setPollLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    action,
+    pollPreviewPhone,
+    parsedLink.kind,
+    parsedLink.peerId,
+    parsedLink.messageId,
+    targetLink,
+    pollReloadKey,
+  ])
+
+  const pollWarningList = useMemo(
+    () => (pollInfo ? pollWarnings(pollInfo) : []),
+    [pollInfo],
+  )
+
+  const pollCancelWarningList = useMemo(
+    () => (pollInfo ? pollCancelWarnings(pollInfo) : []),
+    [pollInfo],
   )
 
   const progressStats = useMemo(() => {
@@ -200,6 +351,83 @@ export function TasksPage() {
     setMediaFile(file)
   }
 
+  async function handleAddPollOption(selectAfterAdd = true) {
+    const label = pollAddOptionLabel.trim()
+    if (!label) {
+      setPollError('Nhập nội dung đáp án mới')
+      return
+    }
+    if (!pollPreviewPhone || !parsedLink.messageId) {
+      setPollError('Cần link poll và ít nhất một tài khoản')
+      return
+    }
+
+    setPollAddOptionLoading(true)
+    setPollError('')
+    try {
+      const res = await api.addPollOption(
+        pollPreviewPhone,
+        parsedLink.peerId,
+        pollInfo?.message_id ?? parsedLink.messageId,
+        label,
+        targetLink.trim() || parsedLink.raw || parsedLink.cleanLink,
+        false,
+      )
+      if (!res.success || !res.data) {
+        setPollError(res.error ?? 'Không thêm được đáp án')
+        return
+      }
+      if (res.data.status === 'error') {
+        setPollError(res.data.message)
+        return
+      }
+
+      const voteKey =
+        res.data.option_hex ||
+        (res.data.todo_item_id != null ? String(res.data.todo_item_id) : '')
+
+      const pollRes = await api.getPollInfo(
+        pollPreviewPhone,
+        parsedLink.peerId,
+        res.data.message_id ?? parsedLink.messageId,
+        targetLink.trim() || parsedLink.raw || parsedLink.cleanLink,
+      )
+      if (pollRes.success && pollRes.data?.status === 'success') {
+        setPollInfo(pollRes.data)
+        if (selectAfterAdd && voteKey) {
+          setSelectedVoteKeys((prev) =>
+            pollRes.data!.multiple_choice
+              ? prev.includes(voteKey)
+                ? prev
+                : [...prev, voteKey]
+              : [voteKey],
+          )
+        }
+      } else if (selectAfterAdd && voteKey) {
+        setSelectedVoteKeys([voteKey])
+        setPollReloadKey((key) => key + 1)
+      } else {
+        setPollReloadKey((key) => key + 1)
+      }
+      setSuccess(res.data.message || 'Đã thêm đáp án')
+    } catch (err) {
+      setPollError(err instanceof Error ? err.message : 'Không thêm được đáp án')
+    } finally {
+      setPollAddOptionLoading(false)
+    }
+  }
+
+  function toggleVoteOption(voteKey: string, multiple: boolean) {
+    setSelectedVoteKeys((prev) => {
+      if (multiple) {
+        return prev.includes(voteKey)
+          ? prev.filter((key) => key !== voteKey)
+          : [...prev, voteKey]
+      }
+      return [voteKey]
+    })
+  }
+
   function validateBeforeRun(): string | null {
     if (selectedList.length === 0) return 'Chọn ít nhất một tài khoản'
 
@@ -214,6 +442,51 @@ export function TasksPage() {
     }
 
     if (actionMeta.needsEmoji && !emoji.trim()) return 'Chọn emoji reaction'
+    if (action === 'cancel-vote-poll' && pollInfo?.closed) {
+      return 'Poll đã đóng — không thể hủy vote'
+    }
+    if (
+      action === 'cancel-vote-poll' &&
+      pollInfo?.kind === 'poll' &&
+      !pollInfo.revoting_allowed
+    ) {
+      return 'Poll không cho phép hủy hoặc đổi vote'
+    }
+    if (
+      action === 'cancel-vote-poll' &&
+      todoCancelMode === 'pick' &&
+      pollInfo?.kind === 'poll'
+    ) {
+      return 'Poll thường chỉ hỗ trợ Hủy hết — chuyển chế độ'
+    }
+    if (action === 'cancel-vote-poll' && todoCancelMode === 'pick' && !pollInfo) {
+      return 'Tải preview To-Do để chọn mục, hoặc chuyển sang Hủy hết'
+    }
+    if (
+      action === 'cancel-vote-poll' &&
+      todoCancelMode === 'pick' &&
+      pollInfo?.kind === 'todo' &&
+      selectedVoteKeys.length === 0
+    ) {
+      return 'Chọn ít nhất một mục To-Do cần bỏ tick'
+    }
+    if (actionMeta.needsVoteOption && pollInfo?.closed) {
+      return 'Poll đã đóng — không thể vote'
+    }
+    if (actionMeta.needsVoteOption && pollAddOptionOnRun) {
+      if (!pollAddOptionLabel.trim()) return 'Nhập đáp án cần thêm khi chạy bulk'
+      if (!pollInfo?.open_answers) return 'Poll không cho phép thêm đáp án'
+      return null
+    }
+    if (
+      actionMeta.needsVoteOption &&
+      selectedVoteKeys.length === 0 &&
+      !parsedLink.pollOptionToken
+    ) {
+      return pollInfo?.multiple_choice
+        ? 'Chọn ít nhất một lựa chọn poll'
+        : 'Chọn một lựa chọn poll'
+    }
     if (actionMeta.needsText && !text.trim()) return 'Nhập nội dung tin nhắn'
     if (actionMeta.needsMedia && !mediaFile) return 'Chọn file media để gửi'
 
@@ -259,6 +532,26 @@ export function TasksPage() {
         stopAfterConsecutiveErrors,
         preCheckLive,
         pipelineStepDelaySeconds,
+        voteMessageId:
+          action === 'vote-poll' || action === 'cancel-vote-poll'
+            ? pollInfo?.message_id ?? parsedLink.messageId
+            : null,
+        voteLink:
+          action === 'vote-poll' || action === 'cancel-vote-poll'
+            ? targetLink.trim() || parsedLink.raw
+            : null,
+        voteOptions:
+          action === 'vote-poll' && selectedVoteKeys.length > 0
+            ? selectedVoteKeys
+            : action === 'cancel-vote-poll' &&
+                pollInfo?.kind === 'todo' &&
+                todoCancelMode === 'pick' &&
+                selectedVoteKeys.length > 0
+              ? selectedVoteKeys
+              : undefined,
+        pollAddOptionLabel:
+          action === 'vote-poll' ? pollAddOptionLabel.trim() : undefined,
+        pollAddOptionOnRun: action === 'vote-poll' ? pollAddOptionOnRun : undefined,
         signal: abortRef.current.signal,
         onProgress: setProgress,
       })
@@ -291,7 +584,7 @@ export function TasksPage() {
           <h1>Tác vụ hàng loạt</h1>
           <p className="page-desc">
             Chọn nhiều acc, dán link bài post hoặc group, chạy lần lượt — react,
-            reply, gửi tin, join/leave và hơn thế nữa.
+            vote poll, reply, gửi tin, join/leave và hơn thế nữa.
           </p>
         </div>
         <div className="tasks-header-actions">
@@ -524,6 +817,325 @@ export function TasksPage() {
                 </p>
               </div>
             )}
+
+            {action === 'cancel-vote-poll' ? (
+              <div className="field tasks-field">
+                <span>Hủy bình chọn</span>
+                <div className="tasks-poll-cancel-panel">
+                  <div
+                    className="tasks-poll-cancel-mode"
+                    role="tablist"
+                    aria-label="Cách hủy bình chọn"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={todoCancelMode === 'all'}
+                      className={`tasks-poll-cancel-mode-btn${
+                        todoCancelMode === 'all' ? ' tasks-poll-cancel-mode-btn--active' : ''
+                      }`}
+                      disabled={running}
+                      onClick={() => {
+                        setTodoCancelMode('all')
+                        setSelectedVoteKeys([])
+                      }}
+                    >
+                      Hủy hết
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={todoCancelMode === 'pick'}
+                      className={`tasks-poll-cancel-mode-btn${
+                        todoCancelMode === 'pick' ? ' tasks-poll-cancel-mode-btn--active' : ''
+                      }`}
+                      disabled={running}
+                      onClick={() => setTodoCancelMode('pick')}
+                    >
+                      Chọn mục
+                      <span className="tasks-poll-cancel-mode-tag">To-Do</span>
+                    </button>
+                  </div>
+                  <p className="tasks-poll-cancel-mode-desc muted">
+                    {todoCancelMode === 'all'
+                      ? pollInfo?.kind === 'todo'
+                        ? 'Bỏ tick hết mục acc đã hoàn thành trên To-Do.'
+                        : pollInfo?.kind === 'poll'
+                          ? 'Gỡ toàn bộ vote poll của từng acc (kể cả nhiều đáp án).'
+                          : 'Gỡ toàn bộ vote — áp dụng cho Poll và To-Do.'
+                      : 'Chỉ To-Do — tick mục cần bỏ, không tick hết mục acc đã chọn.'}
+                  </p>
+
+                  {pollLoading ? (
+                    <div className="tasks-poll-state">
+                      <span className="tasks-poll-loading-dot" aria-hidden />
+                      <p>Đang kiểm tra bài poll…</p>
+                    </div>
+                  ) : null}
+
+                  {!pollLoading && pollError ? (
+                    <p className="tasks-poll-cancel-soft-warn">{pollError}</p>
+                  ) : null}
+
+                  {!pollLoading && pollInfo ? (
+                    <div className="tasks-poll-cancel-head">
+                      <div>
+                        {pollInfo.question ? (
+                          <p className="tasks-poll-cancel-question">{pollInfo.question}</p>
+                        ) : (
+                          <p className="tasks-poll-cancel-question">Bài poll</p>
+                        )}
+                        <p className="tasks-poll-meta muted">
+                          Tải qua <strong>{pollPreviewPhone}</strong>
+                          {pollInfo.message_id ? ` · tin #${pollInfo.message_id}` : ''}
+                        </p>
+                      </div>
+                      <div className="tasks-poll-cancel-badges">
+                        <span
+                          className={`tasks-poll-cancel-badge${
+                            pollInfo.kind === 'todo' ? ' tasks-poll-cancel-badge--todo' : ''
+                          }`}
+                        >
+                          {pollInfo.kind === 'todo' ? 'To-Do' : 'Poll'}
+                        </span>
+                        <button
+                          type="button"
+                          className="tasks-poll-reload"
+                          disabled={running || pollLoading}
+                          onClick={() => setPollReloadKey((key) => key + 1)}
+                        >
+                          Tải lại
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {pollInfo && pollCancelWarningList.length > 0 ? (
+                    <ul className="tasks-poll-warnings">
+                      {pollCancelWarningList.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {todoCancelMode === 'all' ? (
+                    <div className="tasks-poll-cancel-full">
+                      <span className="tasks-poll-cancel-full-icon" aria-hidden>
+                        ↩
+                      </span>
+                      <div>
+                        <p className="tasks-poll-cancel-full-title">
+                          {pollInfo?.kind === 'todo' ? 'Bỏ tick toàn bộ' : 'Hủy toàn bộ vote'}
+                        </p>
+                        <p className="tasks-poll-cancel-full-text muted">
+                          {pollInfo?.kind === 'todo'
+                            ? 'Mỗi acc sẽ bỏ tick hết mục đã hoàn thành trên To-Do này.'
+                            : pollInfo?.multiple_choice
+                              ? 'Dù đã chọn nhiều đáp án, thao tác này gỡ hết vote của từng acc.'
+                              : pollInfo?.kind === 'poll'
+                                ? 'Gỡ lựa chọn hiện tại của từng acc trên poll này.'
+                                : 'Mỗi acc sẽ gỡ toàn bộ vote trên bài post này.'}
+                        </p>
+                      </div>
+                    </div>
+                  ) : pollInfo?.kind === 'todo' ? (
+                    <>
+                      <p className="tasks-poll-cancel-mode-hint">
+                        Chọn mục cần bỏ tick ({selectedVoteKeys.length} đã chọn).
+                      </p>
+                      <div
+                        className="tasks-poll-options tasks-poll-options--cancel"
+                        role="group"
+                        aria-label="Mục cần bỏ tick"
+                      >
+                        {pollInfo.options.map((option) => {
+                          const voteKey = pollOptionVoteKey(option)
+                          const selected = selectedVoteKeys.includes(voteKey)
+                          return (
+                            <button
+                              key={`cancel-${option.index}-${voteKey}`}
+                              type="button"
+                              role="checkbox"
+                              aria-checked={selected}
+                              className={`tasks-poll-option tasks-poll-option--cancel${
+                                selected ? ' tasks-poll-option--active' : ''
+                              }`}
+                              disabled={running}
+                              onClick={() => toggleVoteOption(voteKey, true)}
+                            >
+                              <span className="tasks-poll-option-num">
+                                {selected ? '✓' : '○'}
+                              </span>
+                              <span className="tasks-poll-option-label">{option.label}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </>
+                  ) : pollInfo?.kind === 'poll' ? (
+                    <div className="tasks-poll-cancel-poll-only">
+                      <p className="tasks-poll-cancel-soft-warn">
+                        Bài này là <strong>Poll</strong> — Telegram không cho bỏ từng đáp án.
+                        Chỉ dùng <strong>Hủy hết</strong> để gỡ vote.
+                      </p>
+                      <button
+                        type="button"
+                        className="tasks-poll-cancel-switch-btn"
+                        disabled={running}
+                        onClick={() => {
+                          setTodoCancelMode('all')
+                          setSelectedVoteKeys([])
+                        }}
+                      >
+                        Chuyển sang Hủy hết
+                      </button>
+                    </div>
+                  ) : !pollLoading ? (
+                    <p className="tasks-field-hint muted">
+                      Chọn <strong>Chọn mục</strong> cần đợi preview tải xong (loại To-Do).{' '}
+                      <strong>Hủy hết</strong> có thể chạy ngay chỉ với link.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {actionMeta.needsVoteOption ? (
+              <div className="field tasks-field">
+                <span>Lựa chọn poll</span>
+                {pollLoading ? (
+                  <div className="tasks-poll-state">
+                    <span className="tasks-poll-loading-dot" aria-hidden />
+                    <p>Đang tải poll từ Telegram…</p>
+                  </div>
+                ) : null}
+                {!pollLoading && pollError ? (
+                  <div className="tasks-poll-error-wrap">
+                    <p className="tasks-poll-error">{pollError}</p>
+                    {parsedLink.pollOptionToken ? (
+                      <p className="tasks-field-hint muted">
+                        Link có <code>?option=</code> — vẫn có thể chạy vote nếu acc đã
+                        join group. Hoặc bấm Tải lại rồi chọn đáp án theo tên.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {!pollLoading && pollInfo && pollInfo.options.length > 0 ? (
+                  <div className="tasks-poll-preview">
+                    {pollInfo.question ? (
+                      <p className="tasks-poll-question">{pollInfo.question}</p>
+                    ) : null}
+                    <div className="tasks-poll-meta-row">
+                      <p className="tasks-poll-meta muted">
+                        Tải qua <strong>{pollPreviewPhone}</strong> ·{' '}
+                        {pollInfo.options.length} lựa chọn
+                        {pollInfo.kind === 'todo' ? ' · To-Do' : ''}
+                        {pollInfo.multiple_choice ? ' · Nhiều đáp án' : ''}
+                        {pollInfo.message_id &&
+                        parsedLink.messageId &&
+                        pollInfo.message_id !== parsedLink.messageId
+                          ? ` · poll ở tin #${pollInfo.message_id}`
+                          : ''}
+                      </p>
+                      <button
+                        type="button"
+                        className="tasks-poll-reload"
+                        disabled={running || pollLoading}
+                        onClick={() => setPollReloadKey((key) => key + 1)}
+                      >
+                        Tải lại
+                      </button>
+                    </div>
+                    {pollWarningList.length > 0 ? (
+                      <ul className="tasks-poll-warnings">
+                        {pollWarningList.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {pollInfo.open_answers && action === 'vote-poll' ? (
+                      <div className="tasks-poll-add-option">
+                        <label className="tasks-poll-add-option-label" htmlFor="pollAddOption">
+                          Thêm đáp án mới
+                        </label>
+                        <div className="tasks-poll-add-option-row">
+                          <input
+                            id="pollAddOption"
+                            className="tasks-poll-add-option-input"
+                            type="text"
+                            maxLength={200}
+                            placeholder="Nhập đáp án…"
+                            value={pollAddOptionLabel}
+                            disabled={running || pollAddOptionLoading || pollInfo.closed}
+                            onChange={(event) => setPollAddOptionLabel(event.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="tasks-poll-add-option-btn"
+                            disabled={
+                              running ||
+                              pollAddOptionLoading ||
+                              pollInfo.closed ||
+                              !pollAddOptionLabel.trim()
+                            }
+                            onClick={() => void handleAddPollOption(true)}
+                          >
+                            {pollAddOptionLoading ? 'Đang thêm…' : 'Thêm & chọn'}
+                          </button>
+                        </div>
+                        <label className="tasks-poll-add-option-run">
+                          <input
+                            type="checkbox"
+                            checked={pollAddOptionOnRun}
+                            disabled={running}
+                            onChange={(event) => setPollAddOptionOnRun(event.target.checked)}
+                          />
+                          <span>
+                            Khi chạy bulk: mỗi acc tự thêm đáp án trên rồi vote
+                          </span>
+                        </label>
+                      </div>
+                    ) : null}
+                    <div
+                      className="tasks-poll-options"
+                      role={pollInfo.multiple_choice ? 'group' : 'radiogroup'}
+                      aria-label="Lựa chọn poll"
+                    >
+                      {pollInfo.options.map((option) => {
+                        const voteKey = pollOptionVoteKey(option)
+                        const selected = selectedVoteKeys.includes(voteKey)
+                        return (
+                          <button
+                            key={`${option.index}-${voteKey}`}
+                            type="button"
+                            role={pollInfo.multiple_choice ? 'checkbox' : 'radio'}
+                            aria-checked={selected}
+                            className={`tasks-poll-option${selected ? ' tasks-poll-option--active' : ''}`}
+                            disabled={running || pollInfo.closed}
+                            onClick={() =>
+                              toggleVoteOption(voteKey, pollInfo.multiple_choice)
+                            }
+                          >
+                            <span className="tasks-poll-option-num">
+                              {pollInfo.multiple_choice ? (selected ? '✓' : '+') : option.index}
+                            </span>
+                            <span className="tasks-poll-option-label">{option.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {!pollLoading &&
+                !pollError &&
+                parsedLink.kind === 'post' &&
+                parsedLink.messageId &&
+                pollPreviewPhone &&
+                !pollInfo ? (
+                  <p className="tasks-field-hint muted">Dán link bài poll để hiện lựa chọn.</p>
+                ) : null}
+              </div>
+            ) : null}
 
             {actionMeta.needsEmoji ? (
               <div className="field tasks-field">

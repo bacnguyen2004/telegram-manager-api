@@ -35,6 +35,11 @@ export interface TaskRunOptions {
   stopAfterConsecutiveErrors: number
   preCheckLive: boolean
   pipelineStepDelaySeconds: number
+  voteMessageId?: number | null
+  voteLink?: string | null
+  voteOptions?: string[]
+  pollAddOptionLabel?: string
+  pollAddOptionOnRun?: boolean
   signal?: AbortSignal
   onProgress: (rows: TaskProgressRow[]) => void
 }
@@ -89,6 +94,8 @@ function resultMessage(
     }
     if (action === 'react') return 'Đã thả reaction'
     if (action === 'remove-reaction') return 'Đã gỡ reaction'
+    if (action === 'vote-poll') return 'Đã vote poll'
+    if (action === 'cancel-vote-poll') return 'Đã hủy vote poll'
     if (action === 'reply') return 'Đã reply'
     if (action === 'delete-message') return 'Đã xóa tin'
     if (action === 'mark-read') return 'Đã đánh dấu đọc'
@@ -111,6 +118,11 @@ async function runSingleTask(
   emoji: string,
   text: string,
   mediaFile: File | null,
+  voteMessageId?: number | null,
+  voteLink?: string | null,
+  voteOptions?: string[],
+  pollAddOptionLabel?: string,
+  pollAddOptionOnRun?: boolean,
 ): Promise<{ ok: boolean; message: string }> {
   if (action === 'join') {
     const res = await api.joinGroup(phone, parsed.groupLink || parsed.raw)
@@ -211,6 +223,82 @@ async function runSingleTask(
     }
   }
 
+  if (action === 'cancel-vote-poll') {
+    const messageId = voteMessageId ?? parsed.messageId
+    if (!messageId) {
+      return { ok: false, message: 'Link post thiếu message ID' }
+    }
+    const res = await api.cancelPollVote(
+      phone,
+      parsed.peerId,
+      messageId,
+      voteLink ?? parsed.raw,
+      voteOptions?.length ? voteOptions : undefined,
+    )
+    if (!res.success || !res.data) {
+      return { ok: false, message: res.error ?? 'Hủy vote poll thất bại' }
+    }
+    if (res.data.status === 'error') {
+      return { ok: false, message: res.data.message }
+    }
+    return {
+      ok: true,
+      message: resultMessage(action, res.data, res.data.message || 'Đã hủy vote'),
+    }
+  }
+
+  if (action === 'vote-poll') {
+    const messageId = voteMessageId ?? parsed.messageId
+    if (!messageId) {
+      return { ok: false, message: 'Link post thiếu message ID' }
+    }
+
+    if (pollAddOptionOnRun && pollAddOptionLabel?.trim()) {
+      const addRes = await api.addPollOption(
+        phone,
+        parsed.peerId,
+        messageId,
+        pollAddOptionLabel.trim(),
+        voteLink ?? parsed.raw,
+        true,
+      )
+      if (!addRes.success || !addRes.data) {
+        return { ok: false, message: addRes.error ?? 'Thêm đáp án poll thất bại' }
+      }
+      if (addRes.data.status === 'error') {
+        return { ok: false, message: addRes.data.message }
+      }
+      return {
+        ok: true,
+        message: addRes.data.message || 'Đã thêm và vote đáp án',
+      }
+    }
+
+    const option = text.trim()
+    const options = voteOptions?.filter(Boolean) ?? []
+    if (!option && options.length === 0 && !parsed.pollOptionToken) {
+      return { ok: false, message: 'Chưa nhập lựa chọn poll' }
+    }
+    const res = await api.votePoll(
+      phone,
+      parsed.peerId,
+      messageId,
+      option,
+      voteLink ?? parsed.raw,
+      options.length > 0 ? options : undefined,
+    )
+    if (!res.success || !res.data) {
+      return { ok: false, message: res.error ?? 'Vote poll thất bại' }
+    }
+    if (res.data.status === 'error') {
+      return { ok: false, message: res.data.message }
+    }
+    return {
+      ok: true,
+      message: resultMessage(action, res.data, res.data.message || 'Đã vote'),
+    }
+  }
+
   if (action === 'reply') {
     if (!parsed.messageId) {
       return { ok: false, message: 'Link post thiếu message ID' }
@@ -298,6 +386,11 @@ async function runWithRetry(
   mediaFile: File | null,
   retryAttempts: number,
   pipelineStepDelaySeconds: number,
+  voteMessageId: number | null | undefined,
+  voteLink: string | null | undefined,
+  voteOptions: string[] | undefined,
+  pollAddOptionLabel: string | undefined,
+  pollAddOptionOnRun: boolean | undefined,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; message: string }> {
   const maxAttempts = Math.max(1, retryAttempts + 1)
@@ -319,6 +412,11 @@ async function runWithRetry(
         emoji,
         text,
         mediaFile,
+        voteMessageId,
+        voteLink,
+        voteOptions,
+        pollAddOptionLabel,
+        pollAddOptionOnRun,
       )
 
       if (!result.ok) {
@@ -410,6 +508,11 @@ export async function runTaskQueue(options: TaskRunOptions): Promise<TaskProgres
     stopAfterConsecutiveErrors,
     retryAttempts,
     pipelineStepDelaySeconds,
+    voteMessageId,
+    voteLink,
+    voteOptions,
+    pollAddOptionLabel,
+    pollAddOptionOnRun,
   } = options
 
   const meta = getActionMeta(action)
@@ -504,6 +607,11 @@ export async function runTaskQueue(options: TaskRunOptions): Promise<TaskProgres
         mediaFile,
         retryAttempts,
         meta.isPipeline ? pipelineStepDelaySeconds : 0,
+        voteMessageId,
+        voteLink,
+        voteOptions,
+        pollAddOptionLabel,
+        pollAddOptionOnRun,
         signal,
       )
       rows[rowIndex] = {

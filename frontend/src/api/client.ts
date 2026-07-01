@@ -4,7 +4,11 @@ import type {
   DialogMessagesData,
   DialogsData,
   MarkDialogReadData,
+  AddPollOptionData,
+  CancelPollVoteData,
   ReactMessageData,
+  VotePollData,
+  PollInfoData,
   SendMessageData,
   GroupActionData,
   GroupsData,
@@ -265,6 +269,77 @@ export const api = {
         peer_id: peerId,
         message_id: messageId,
         emoji,
+      }),
+    })
+  },
+
+  getPollInfo(phone: string, peerId: string, messageId: number, link?: string) {
+    const params = new URLSearchParams({
+      phone,
+      peer_id: peerId,
+      message_id: String(messageId),
+    })
+    if (link?.trim()) params.set('link', link.trim())
+    return request<PollInfoData>(`/messages/poll?${params}`)
+  },
+
+  addPollOption(
+    phone: string,
+    peerId: string,
+    messageId: number,
+    label: string,
+    link?: string,
+    voteAfter = false,
+  ) {
+    return request<AddPollOptionData>('/messages/poll/add-option', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        message_id: messageId,
+        label: label.trim(),
+        link: link?.trim() || null,
+        vote_after: voteAfter,
+      }),
+    })
+  },
+
+  cancelPollVote(
+    phone: string,
+    peerId: string,
+    messageId: number,
+    link?: string,
+    options?: string[],
+  ) {
+    return request<CancelPollVoteData>('/messages/vote/cancel', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        message_id: messageId,
+        link: link?.trim() || null,
+        options: options?.length ? options : null,
+      }),
+    })
+  },
+
+  votePoll(
+    phone: string,
+    peerId: string,
+    messageId: number,
+    option: string,
+    link?: string,
+    options?: string[],
+  ) {
+    return request<VotePollData>('/messages/vote', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        message_id: messageId,
+        option,
+        options: options?.length ? options : null,
+        link: link?.trim() || null,
       }),
     })
   },

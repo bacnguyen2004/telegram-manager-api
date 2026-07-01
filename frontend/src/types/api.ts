@@ -249,6 +249,66 @@ export interface ReactMessageData {
   message: string
 }
 
+export interface CancelPollVoteData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  message_id: number | null
+  reply_to_msg_id: number | null
+  option: string | null
+  message: string
+}
+
+export interface VotePollData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  message_id: number | null
+  reply_to_msg_id: number | null
+  option: string | null
+  message: string
+}
+
+export interface AddPollOptionData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  message_id: number | null
+  reply_to_msg_id: number | null
+  label: string | null
+  option_hex: string | null
+  todo_item_id: number | null
+  voted: boolean
+  message: string
+}
+
+export interface PollOptionItem {
+  index: number
+  label: string
+  option_hex: string
+  todo_item_id: number | null
+}
+
+export interface PollInfoData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  message_id: number | null
+  question: string
+  kind: 'poll' | 'todo'
+  multiple_choice: boolean
+  open_answers: boolean
+  shuffle_answers: boolean
+  revoting_allowed: boolean
+  closed: boolean
+  quiz: boolean
+  public_voters: boolean
+  close_date: string | null
+  options: PollOptionItem[]
+  suggested_option_index: number | null
+  message: string
+}
+
 export interface DialogMessagesData {
   status: 'success' | 'error'
   phone: string

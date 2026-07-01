@@ -6,6 +6,15 @@ import {
 } from './telegramLink'
 
 describe('parseTelegramLink', () => {
+  it('parses public post links with poll option query', () => {
+    const parsed = parseTelegramLink('https://t.me/Fomo_Gems_Chat/82839?option=Mg')
+    expect(parsed.kind).toBe('post')
+    expect(parsed.peerId).toBe('@Fomo_Gems_Chat')
+    expect(parsed.messageId).toBe(82839)
+    expect(parsed.cleanLink).toBe('https://t.me/Fomo_Gems_Chat/82839')
+    expect(parsed.pollOptionToken).toBe('Mg')
+  })
+
   it('parses public post links', () => {
     const parsed = parseTelegramLink('https://t.me/cexalerts/12345')
     expect(parsed.kind).toBe('post')
@@ -13,6 +22,7 @@ describe('parseTelegramLink', () => {
     expect(parsed.messageId).toBe(12345)
     expect(parsed.supportedActions).toContain('react')
     expect(parsed.supportedActions).toContain('remove-reaction')
+    expect(parsed.supportedActions).toContain('vote-poll')
     expect(parsed.supportedActions).toContain('pipeline-join-reply')
   })
 
@@ -70,5 +80,19 @@ describe('getActionMeta', () => {
   it('react hint does not require join', () => {
     const meta = getActionMeta('react')
     expect(meta.hint).toMatch(/không cần join/i)
+  })
+
+  it('marks vote-poll as needing poll option', () => {
+    const meta = getActionMeta('vote-poll')
+    expect(meta.needsVoteOption).toBe(true)
+    expect(meta.requiresMessageId).toBe(true)
+    expect(meta.group).toBe('polls')
+  })
+
+  it('includes cancel-vote-poll on post links', () => {
+    const parsed = parseTelegramLink('https://t.me/example/99')
+    expect(parsed.supportedActions).toContain('cancel-vote-poll')
+    const meta = getActionMeta('cancel-vote-poll')
+    expect(meta.needsVoteOption).toBe(false)
   })
 })

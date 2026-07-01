@@ -43,6 +43,7 @@ def run_migrations() -> None:
     if not alembic_ini.exists():
         return
     cfg = Config(str(alembic_ini))
+    cfg.set_main_option("script_location", str(Path(BASE_DIR) / "alembic"))
     cfg.set_main_option("sqlalchemy.url", settings.database_url)
     command.upgrade(cfg, "head")
 

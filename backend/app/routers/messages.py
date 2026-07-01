@@ -2,11 +2,18 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 
 from ..schemas.common import ApiEnvelope
 from ..schemas.messages import (
+    AddPollOptionData,
+    AddPollOptionRequest,
+    CancelPollVoteData,
+    CancelPollVoteRequest,
+    PollInfoData,
     ReactMessageData,
     ReactMessageRequest,
     ReplyMessageRequest,
     SendMessageData,
     SendMessageRequest,
+    VotePollData,
+    VotePollRequest,
 )
 from ..services.telegram.messages import telegram_message_service
 from ..utils.responses import success_response
@@ -95,6 +102,64 @@ async def send_reaction(payload: ReactMessageRequest) -> dict:
         payload.emoji,
     )
     data = ReactMessageData(**result)
+    return success_response(data.model_dump())
+
+
+@router.get("/poll", response_model=ApiEnvelope[PollInfoData])
+async def get_poll_info(
+    phone: str = Query(..., description="So dien thoai session"),
+    peer_id: str = Query(..., description="Dialog id hoac username"),
+    message_id: int = Query(..., ge=1, description="ID tin nhan chua poll"),
+    link: str | None = Query(None, description="Link day du t.me/... de fetch poll"),
+) -> dict:
+    result = await telegram_message_service.get_poll_info(
+        phone,
+        peer_id,
+        message_id,
+        link=link,
+    )
+    data = PollInfoData(**result)
+    return success_response(data.model_dump())
+
+
+@router.post("/poll/add-option", response_model=ApiEnvelope[AddPollOptionData])
+async def add_poll_option(payload: AddPollOptionRequest) -> dict:
+    result = await telegram_message_service.add_poll_option(
+        payload.phone,
+        payload.peer_id,
+        payload.message_id,
+        payload.label,
+        link=payload.link,
+        vote_after=payload.vote_after,
+    )
+    data = AddPollOptionData(**result)
+    return success_response(data.model_dump())
+
+
+@router.post("/vote/cancel", response_model=ApiEnvelope[CancelPollVoteData])
+async def cancel_poll_vote(payload: CancelPollVoteRequest) -> dict:
+    result = await telegram_message_service.cancel_poll_vote(
+        payload.phone,
+        payload.peer_id,
+        payload.message_id,
+        link=payload.link,
+        options=payload.options,
+    )
+    data = CancelPollVoteData(**result)
+    return success_response(data.model_dump())
+
+
+@router.post("/vote", response_model=ApiEnvelope[VotePollData])
+async def vote_poll(payload: VotePollRequest) -> dict:
+    result = await telegram_message_service.vote_poll(
+        payload.phone,
+        payload.peer_id,
+        payload.message_id,
+        payload.option,
+        options=payload.options,
+        link=payload.link,
+    )
+    data = VotePollData(**result)
     return success_response(data.model_dump())
 
 

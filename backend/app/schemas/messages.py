@@ -56,3 +56,117 @@ class ReactMessageRequest(BaseModel):
 
 class ReactMessageData(MessageActionData):
     emoji: str | None = None
+
+
+class VotePollRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    peer_id: str = Field(
+        ...,
+        description="Dialog id, username hoac link t.me",
+        examples=["123456789", "@username"],
+    )
+    message_id: int = Field(..., ge=1, description="ID tin nhan chua poll")
+    option: str = Field(
+        "",
+        max_length=256,
+        description="Lua chon don: so thu tu, text, option_hex, hoac bo trong neu link co ?option=",
+        examples=["1", "Co", "32"],
+    )
+    options: list[str] | None = Field(
+        None,
+        description="Nhieu lua chon: danh sach option_hex (poll) hoac todo_item_id (todo)",
+    )
+    link: str | None = Field(
+        None,
+        description="Link day du t.me/... co the kem ?option= (base64)",
+    )
+
+
+class VotePollData(MessageActionData):
+    option: str | None = None
+
+
+class CancelPollVoteRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    peer_id: str = Field(
+        ...,
+        description="Dialog id, username hoac link t.me",
+        examples=["123456789", "@username"],
+    )
+    message_id: int = Field(..., ge=1, description="ID tin nhan chua poll")
+    link: str | None = Field(
+        None,
+        description="Link day du t.me/... de fetch poll",
+    )
+    options: list[str] | None = Field(
+        None,
+        description="Todo: bo chon muc cu the (todo_item_id). Bo trong = huy toan bo vote",
+    )
+
+
+class CancelPollVoteData(MessageActionData):
+    option: str | None = None
+
+
+class AddPollOptionRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    peer_id: str = Field(
+        ...,
+        description="Dialog id, username hoac link t.me",
+        examples=["123456789", "@username"],
+    )
+    message_id: int = Field(..., ge=1, description="ID tin nhan chua poll")
+    label: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Noi dung dap an moi can them",
+    )
+    link: str | None = Field(
+        None,
+        description="Link day du t.me/... de fetch poll",
+    )
+    vote_after: bool = Field(
+        False,
+        description="Tu dong vote dap an vua them",
+    )
+
+
+class AddPollOptionData(MessageActionData):
+    label: str | None = None
+    option_hex: str | None = None
+    todo_item_id: int | None = None
+    voted: bool = False
+
+
+class PollOptionItem(BaseModel):
+    index: int = Field(..., ge=1, description="So thu tu lua chon (1-based)")
+    label: str = Field(..., min_length=1, max_length=256)
+    option_hex: str = Field(
+        "",
+        description="ID on dinh cua dap an poll (bytes hex), dung de vote",
+    )
+    todo_item_id: int | None = Field(
+        None,
+        description="ID muc todo neu la MessageMediaToDo",
+    )
+
+
+class PollInfoData(BaseModel):
+    status: Literal["success", "error"]
+    phone: str
+    peer_id: str
+    message_id: int | None = None
+    question: str = ""
+    kind: Literal["poll", "todo"] = "poll"
+    multiple_choice: bool = False
+    open_answers: bool = False
+    shuffle_answers: bool = False
+    revoting_allowed: bool = True
+    closed: bool = False
+    quiz: bool = False
+    public_voters: bool = False
+    close_date: str | None = None
+    options: list[PollOptionItem] = Field(default_factory=list)
+    suggested_option_index: int | None = None
+    message: str

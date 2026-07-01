@@ -4,6 +4,8 @@ export type TaskAction =
   | 'leave-all'
   | 'react'
   | 'remove-reaction'
+  | 'vote-poll'
+  | 'cancel-vote-poll'
   | 'reply'
   | 'send'
   | 'send-media'
@@ -12,10 +14,12 @@ export type TaskAction =
   | 'pipeline-join-send'
   | 'pipeline-join-reply'
 
-export type TaskActionGroup = 'groups' | 'messages' | 'reactions' | 'pipelines'
+export type TaskActionGroup = 'groups' | 'messages' | 'reactions' | 'polls' | 'pipelines'
 
 export interface ParsedTelegramLink {
   raw: string
+  cleanLink: string
+  pollOptionToken: string | null
   kind: 'post' | 'group' | 'invite' | 'invalid'
   peerId: string
   messageId: number | null
@@ -35,6 +39,7 @@ export interface TaskActionMeta {
   needsText: boolean
   needsEmoji: boolean
   needsMedia: boolean
+  needsVoteOption: boolean
   isPipeline: boolean
 }
 
@@ -42,6 +47,8 @@ const POST_ACTIONS: TaskAction[] = [
   'react',
   'reply',
   'remove-reaction',
+  'vote-poll',
+  'cancel-vote-poll',
   'delete-message',
   'pipeline-join-reply',
 ]
@@ -71,6 +78,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -84,6 +92,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -97,6 +106,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -110,6 +120,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -123,6 +134,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: true,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -136,6 +148,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: true,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -149,6 +162,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: true,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -162,6 +176,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -175,6 +190,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: true,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -188,6 +204,35 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: false,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
+    isPipeline: false,
+  },
+  {
+    id: 'vote-poll',
+    group: 'polls',
+    label: 'Vote poll',
+    hint: 'Bình chọn poll trên bài post — dán link rồi chọn lựa chọn hiện ra',
+    icon: '📊',
+    requiresLink: true,
+    requiresMessageId: true,
+    needsText: false,
+    needsEmoji: false,
+    needsMedia: false,
+    needsVoteOption: true,
+    isPipeline: false,
+  },
+  {
+    id: 'cancel-vote-poll',
+    group: 'polls',
+    label: 'Hủy vote',
+    hint: 'Hủy bình chọn poll/to-do trên bài post — chỉ cần link',
+    icon: '↩',
+    requiresLink: true,
+    requiresMessageId: true,
+    needsText: false,
+    needsEmoji: false,
+    needsMedia: false,
+    needsVoteOption: false,
     isPipeline: false,
   },
   {
@@ -201,6 +246,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: true,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: true,
   },
   {
@@ -214,6 +260,7 @@ export const TASK_ACTION_META: TaskActionMeta[] = [
     needsText: true,
     needsEmoji: false,
     needsMedia: false,
+    needsVoteOption: false,
     isPipeline: true,
   },
 ]
@@ -222,6 +269,7 @@ export const TASK_ACTION_GROUPS: { id: TaskActionGroup; label: string }[] = [
   { id: 'groups', label: 'Nhóm' },
   { id: 'messages', label: 'Tin nhắn' },
   { id: 'reactions', label: 'Reaction' },
+  { id: 'polls', label: 'Vote' },
   { id: 'pipelines', label: 'Pipeline' },
 ]
 
@@ -230,8 +278,19 @@ const PRIVATE_POST_RE = /(?:https?:\/\/)?t\.me\/c\/(\d+)\/(\d+)\/?$/i
 const INVITE_RE = /(?:https?:\/\/)?t\.me\/(?:\+|joinchat\/)([a-zA-Z0-9_-]+)\/?$/i
 const GROUP_RE = /(?:https?:\/\/)?t\.me\/([a-zA-Z0-9_]+)\/?$/i
 
+function stripLinkQuery(raw: string): string {
+  return raw.trim().split('?')[0].split('#')[0].trim()
+}
+
+function extractPollOptionToken(raw: string): string | null {
+  const queryIndex = raw.indexOf('?')
+  if (queryIndex < 0) return null
+  const params = new URLSearchParams(raw.slice(queryIndex + 1))
+  return params.get('option') || params.get('vote')
+}
+
 function normalizeLinkInput(raw: string): string {
-  const trimmed = raw.trim()
+  const trimmed = stripLinkQuery(raw)
   if (!trimmed) return ''
   if (/^https?:\/\//i.test(trimmed)) return trimmed
   if (trimmed.startsWith('t.me/')) return `https://${trimmed}`
@@ -240,9 +299,12 @@ function normalizeLinkInput(raw: string): string {
 }
 
 export function parseTelegramLink(raw: string): ParsedTelegramLink {
+  const pollOptionToken = extractPollOptionToken(raw)
   const normalized = normalizeLinkInput(raw)
   const invalid = (label: string): ParsedTelegramLink => ({
-    raw: normalized,
+    raw: raw.trim(),
+    cleanLink: normalized,
+    pollOptionToken,
     kind: 'invalid',
     peerId: '',
     messageId: null,
@@ -261,7 +323,9 @@ export function parseTelegramLink(raw: string): ParsedTelegramLink {
     const messageId = Number(privateMatch[2])
     const peerId = `-100${channelId}`
     return {
-      raw: normalized,
+      raw: raw.trim(),
+      cleanLink: normalized,
+      pollOptionToken,
       kind: 'post',
       peerId,
       messageId,
@@ -278,7 +342,9 @@ export function parseTelegramLink(raw: string): ParsedTelegramLink {
     if (username === 'c') return invalid('Link không hợp lệ')
     const peerId = `@${username}`
     return {
-      raw: normalized,
+      raw: raw.trim(),
+      cleanLink: normalized,
+      pollOptionToken,
       kind: 'post',
       peerId,
       messageId,
@@ -293,7 +359,9 @@ export function parseTelegramLink(raw: string): ParsedTelegramLink {
     const hash = inviteMatch[1]
     const groupLink = `https://t.me/+${hash}`
     return {
-      raw: normalized,
+      raw: raw.trim(),
+      cleanLink: normalized,
+      pollOptionToken,
       kind: 'invite',
       peerId: groupLink,
       messageId: null,
@@ -308,7 +376,9 @@ export function parseTelegramLink(raw: string): ParsedTelegramLink {
     const username = groupMatch[1]
     const groupLink = `https://t.me/${username}`
     return {
-      raw: normalized,
+      raw: raw.trim(),
+      cleanLink: normalized,
+      pollOptionToken,
       kind: 'group',
       peerId: `@${username}`,
       messageId: null,
@@ -320,7 +390,9 @@ export function parseTelegramLink(raw: string): ParsedTelegramLink {
 
   if (/^-?\d+$/.test(normalized)) {
     return {
-      raw: normalized,
+      raw: raw.trim(),
+      cleanLink: normalized,
+      pollOptionToken,
       kind: 'group',
       peerId: normalized,
       messageId: null,
@@ -333,7 +405,9 @@ export function parseTelegramLink(raw: string): ParsedTelegramLink {
   if (normalized.startsWith('@')) {
     const peerId = normalized
     return {
-      raw: normalized,
+      raw: raw.trim(),
+      cleanLink: normalized,
+      pollOptionToken,
       kind: 'group',
       peerId,
       messageId: null,
