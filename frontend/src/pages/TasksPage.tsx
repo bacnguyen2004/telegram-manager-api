@@ -5,25 +5,19 @@ import { StatusBadge } from '../components/StatusBadge'
 import type { CheckSessionItem } from '../types/api'
 import { DEFAULT_QUICK_REACTIONS } from '../utils/reactions'
 import {
-  actionLabel,
+  actionsForGroup,
+  getActionMeta,
   isActionAllowed,
   parseTelegramLink,
+  TASK_ACTION_GROUPS,
   type TaskAction,
+  type TaskActionGroup,
 } from '../utils/telegramLink'
 import {
   runTaskQueue,
   type TaskProgressRow,
   type TaskRowStatus,
 } from '../utils/taskRunner'
-
-const TASK_ACTIONS: TaskAction[] = ['join', 'react', 'reply', 'send']
-
-const ACTION_HINTS: Record<TaskAction, string> = {
-  join: 'Join group/channel từ link invite hoặc @username',
-  react: 'Thả reaction lên bài post (link dạng t.me/channel/123)',
-  reply: 'Reply bài post với nội dung bạn nhập',
-  send: 'Gửi tin nhắn vào group hoặc chat',
-}
 
 function statusLabel(status: TaskRowStatus): string {
   const map: Record<TaskRowStatus, string> = {
@@ -37,15 +31,31 @@ function statusLabel(status: TaskRowStatus): string {
   return map[status]
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export function TasksPage() {
   const [sessions, setSessions] = useState<string[]>([])
   const [checkResults, setCheckResults] = useState<CheckSessionItem[]>([])
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set())
   const [targetLink, setTargetLink] = useState('')
+  const [actionGroup, setActionGroup] = useState<TaskActionGroup>('reactions')
   const [action, setAction] = useState<TaskAction>('react')
   const [emoji, setEmoji] = useState<string>(DEFAULT_QUICK_REACTIONS[0])
   const [text, setText] = useState('')
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
   const [delaySeconds, setDelaySeconds] = useState(5)
+  const [delayMinSeconds, setDelayMinSeconds] = useState(3)
+  const [delayMaxSeconds, setDelayMaxSeconds] = useState(8)
+  const [useRandomDelay, setUseRandomDelay] = useState(false)
+  const [retryAttempts, setRetryAttempts] = useState(1)
+  const [stopAfterConsecutiveErrors, setStopAfterConsecutiveErrors] = useState(0)
+  const [preCheckLive, setPreCheckLive] = useState(true)
+  const [pipelineStepDelaySeconds, setPipelineStepDelaySeconds] = useState(3)
+  const [showRunOptions, setShowRunOptions] = useState(false)
   const [loadingSessions, setLoadingSessions] = useState(true)
   const [checking, setChecking] = useState(false)
   const [running, setRunning] = useState(false)
@@ -53,8 +63,10 @@ export function TasksPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const abortRef = useRef<AbortController | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const parsedLink = useMemo(() => parseTelegramLink(targetLink), [targetLink])
+  const actionMeta = useMemo(() => getActionMeta(action), [action])
 
   const sessionRows = useMemo(() => {
     const statusMap = new Map(checkResults.map((item) => [item.phone, item]))
@@ -69,10 +81,7 @@ export function TasksPage() {
     [checkResults],
   )
 
-  const allowedActions = useMemo(() => {
-    if (parsedLink.kind === 'invalid') return TASK_ACTIONS
-    return TASK_ACTIONS.filter((item) => isActionAllowed(parsedLink, item))
-  }, [parsedLink])
+  const groupActions = useMemo(() => actionsForGroup(actionGroup), [actionGroup])
 
   const selectedList = useMemo(
     () => sessions.filter((phone) => selectedPhones.has(phone)),
@@ -82,10 +91,11 @@ export function TasksPage() {
   const progressStats = useMemo(() => {
     const done = progress.filter((row) => row.status === 'success').length
     const failed = progress.filter((row) => row.status === 'error').length
+    const skipped = progress.filter((row) => row.status === 'skipped').length
     const runningCount = progress.filter((row) => row.status === 'running').length
     const total = progress.length
     const pct = total > 0 ? Math.round((done / total) * 100) : 0
-    return { done, failed, runningCount, total, pct }
+    return { done, failed, skipped, runningCount, total, pct }
   }, [progress])
 
   const loadSessions = useCallback(async () => {
@@ -117,10 +127,11 @@ export function TasksPage() {
   }, [loadSessions])
 
   useEffect(() => {
-    if (!allowedActions.includes(action) && allowedActions.length > 0) {
-      setAction(allowedActions[0])
+    if (action !== 'send-media') {
+      setMediaFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
-  }, [allowedActions, action])
+  }, [action])
 
   function togglePhone(phone: string) {
     setSelectedPhones((prev) => {
@@ -146,6 +157,25 @@ export function TasksPage() {
     setSelectedPhones(new Set())
   }
 
+  function selectCategory(group: TaskActionGroup) {
+    const actions = actionsForGroup(group)
+    setActionGroup(group)
+    if (!actions.some((item) => item.id === action)) {
+      setAction(actions[0]?.id ?? 'react')
+    }
+  }
+
+  function selectAction(next: TaskAction) {
+    setAction(next)
+    setActionGroup(getActionMeta(next).group)
+  }
+
+  function isActionDisabled(item: TaskAction): boolean {
+    if (item === 'leave-all') return false
+    if (parsedLink.kind === 'invalid') return false
+    return !isActionAllowed(parsedLink, item)
+  }
+
   async function handleCheckSessions() {
     setChecking(true)
     setError('')
@@ -166,19 +196,31 @@ export function TasksPage() {
     }
   }
 
+  function handleMediaChange(file: File | null) {
+    setMediaFile(file)
+  }
+
   function validateBeforeRun(): string | null {
     if (selectedList.length === 0) return 'Chọn ít nhất một tài khoản'
-    if (parsedLink.kind === 'invalid') return parsedLink.label
-    if (!isActionAllowed(parsedLink, action)) {
-      return `Link này không hỗ trợ "${actionLabel(action)}"`
+
+    if (actionMeta.requiresLink) {
+      if (parsedLink.kind === 'invalid') return parsedLink.label
+      if (!isActionAllowed(parsedLink, action)) {
+        return `Link này không hỗ trợ "${actionMeta.label}"`
+      }
+      if (actionMeta.requiresMessageId && !parsedLink.messageId) {
+        return 'Cần link bài post dạng t.me/channel/123'
+      }
     }
-    if ((action === 'react' || action === 'reply') && !parsedLink.messageId) {
-      return 'Cần link bài post dạng t.me/channel/123'
+
+    if (actionMeta.needsEmoji && !emoji.trim()) return 'Chọn emoji reaction'
+    if (actionMeta.needsText && !text.trim()) return 'Nhập nội dung tin nhắn'
+    if (actionMeta.needsMedia && !mediaFile) return 'Chọn file media để gửi'
+
+    if (useRandomDelay && delayMinSeconds > delayMaxSeconds) {
+      return 'Delay min phải ≤ max'
     }
-    if (action === 'react' && !emoji.trim()) return 'Chọn emoji reaction'
-    if ((action === 'reply' || action === 'send') && !text.trim()) {
-      return 'Nhập nội dung tin nhắn'
-    }
+
     return null
   }
 
@@ -208,13 +250,22 @@ export function TasksPage() {
         parsed: parsedLink,
         emoji,
         text: text.trim(),
+        mediaFile,
         delaySeconds,
+        delayMinSeconds,
+        delayMaxSeconds,
+        useRandomDelay,
+        retryAttempts,
+        stopAfterConsecutiveErrors,
+        preCheckLive,
+        pipelineStepDelaySeconds,
         signal: abortRef.current.signal,
         onProgress: setProgress,
       })
       const ok = finalRows.filter((row) => row.status === 'success').length
       const fail = finalRows.filter((row) => row.status === 'error').length
-      setSuccess(`Hoàn tất: ${ok} thành công, ${fail} lỗi`)
+      const skip = finalRows.filter((row) => row.status === 'skipped').length
+      setSuccess(`Hoàn tất: ${ok} thành công, ${fail} lỗi${skip ? `, ${skip} bỏ qua` : ''}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Chạy task thất bại')
     } finally {
@@ -228,7 +279,9 @@ export function TasksPage() {
   }
 
   const currentStep =
-    selectedList.length === 0 ? 1 : targetLink.trim() ? 3 : 2
+    selectedList.length === 0 ? 1 : action === 'leave-all' || targetLink.trim() ? 3 : 2
+
+  const needsTextField = actionMeta.needsText || action === 'send-media'
 
   return (
     <div className="page page--tasks">
@@ -237,8 +290,8 @@ export function TasksPage() {
           <span className="tasks-page-kicker">Bulk automation</span>
           <h1>Tác vụ hàng loạt</h1>
           <p className="page-desc">
-            Chọn nhiều acc, dán link Telegram, chạy lần lượt — join, react, reply
-            hoặc gửi tin.
+            Chọn nhiều acc, dán link bài post hoặc group, chạy lần lượt — react,
+            reply, gửi tin, join/leave và hơn thế nữa.
           </p>
         </div>
         <div className="tasks-header-actions">
@@ -291,7 +344,7 @@ export function TasksPage() {
         </div>
         <div className={`tasks-step${currentStep >= 2 ? ' tasks-step--active' : ''}`}>
           <span className="tasks-step-num">2</span>
-          <span className="tasks-step-label">Link & hành động</span>
+          <span className="tasks-step-label">Hành động & cấu hình</span>
         </div>
         <div className={`tasks-step${currentStep >= 3 ? ' tasks-step--active' : ''}`}>
           <span className="tasks-step-num">3</span>
@@ -375,61 +428,104 @@ export function TasksPage() {
         </section>
 
         <section className="panel tasks-workflow-panel">
-          <div className="tasks-action-tabs" role="tablist" aria-label="Loại tác vụ">
-            {TASK_ACTIONS.map((item) => {
-              const disabled =
-                parsedLink.kind !== 'invalid' && !isActionAllowed(parsedLink, item)
+          <div className="tasks-category-bar" role="tablist" aria-label="Nhóm hành động">
+            {TASK_ACTION_GROUPS.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                role="tab"
+                aria-selected={actionGroup === group.id}
+                className={`tasks-category-tab${actionGroup === group.id ? ' tasks-category-tab--active' : ''}`}
+                disabled={running}
+                onClick={() => selectCategory(group.id)}
+              >
+                {group.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="tasks-action-grid">
+            {groupActions.map((item) => {
+              const disabled = isActionDisabled(item.id)
               return (
                 <button
-                  key={item}
+                  key={item.id}
                   type="button"
-                  role="tab"
-                  aria-selected={action === item}
-                  className={`tasks-action-tab${action === item ? ' tasks-action-tab--active' : ''}`}
+                  className={`tasks-action-card${action === item.id ? ' tasks-action-card--active' : ''}${disabled ? ' tasks-action-card--disabled' : ''}`}
                   disabled={running || disabled}
-                  onClick={() => setAction(item)}
+                  onClick={() => selectAction(item.id)}
+                  title={disabled ? 'Link hiện tại không hỗ trợ' : item.hint}
                 >
-                  {actionLabel(item)}
+                  <span className="tasks-action-card-icon" aria-hidden>
+                    {item.icon}
+                  </span>
+                  <span className="tasks-action-card-label">{item.label}</span>
+                  {item.isPipeline ? (
+                    <span className="tasks-action-card-badge">2 bước</span>
+                  ) : null}
                 </button>
               )
             })}
           </div>
 
           <div className="tasks-workflow-body">
-            <p className="tasks-action-hint">{ACTION_HINTS[action]}</p>
-
-            <label className="field tasks-field">
-              <span>Link mục tiêu</span>
-              <input
-                type="url"
-                placeholder="https://t.me/channel/123 hoặc https://t.me/+invite"
-                value={targetLink}
-                onChange={(e) => setTargetLink(e.target.value)}
-                disabled={running}
-              />
-            </label>
-
-            <div
-              className={`tasks-link-preview${
-                parsedLink.kind === 'invalid' && targetLink.trim()
-                  ? ' tasks-link-preview--invalid'
-                  : parsedLink.kind !== 'invalid' && targetLink.trim()
-                    ? ' tasks-link-preview--valid'
-                    : ''
-              }`}
-            >
-              <p className="tasks-link-preview-label">Phân tích link</p>
-              <p className="tasks-link-preview-text">
-                {targetLink.trim() ? parsedLink.label : 'Dán link Telegram để xem preview'}
-              </p>
-              {parsedLink.kind !== 'invalid' && targetLink.trim() ? (
-                <p className="tasks-link-preview-meta">
-                  {parsedLink.supportedActions.map((item) => actionLabel(item)).join(' · ')}
-                </p>
-              ) : null}
+            <div className="tasks-action-summary">
+              <span className="tasks-action-summary-icon" aria-hidden>
+                {actionMeta.icon}
+              </span>
+              <div>
+                <p className="tasks-action-summary-title">{actionMeta.label}</p>
+                <p className="tasks-action-hint">{actionMeta.hint}</p>
+              </div>
             </div>
 
-            {action === 'react' ? (
+            {actionMeta.requiresLink ? (
+              <>
+                <label className="field tasks-field">
+                  <span>Link mục tiêu</span>
+                  <input
+                    type="url"
+                    placeholder="https://t.me/channel/123 hoặc https://t.me/+invite"
+                    value={targetLink}
+                    onChange={(e) => setTargetLink(e.target.value)}
+                    disabled={running}
+                  />
+                </label>
+
+                <div
+                  className={`tasks-link-preview${
+                    parsedLink.kind === 'invalid' && targetLink.trim()
+                      ? ' tasks-link-preview--invalid'
+                      : parsedLink.kind !== 'invalid' && targetLink.trim()
+                        ? ' tasks-link-preview--valid'
+                        : ''
+                  }`}
+                >
+                  <p className="tasks-link-preview-label">Phân tích link</p>
+                  <p className="tasks-link-preview-text">
+                    {targetLink.trim() ? parsedLink.label : 'Dán link Telegram để xem preview'}
+                  </p>
+                  {parsedLink.kind !== 'invalid' && targetLink.trim() ? (
+                    <p className="tasks-link-preview-meta">
+                      Hỗ trợ:{' '}
+                      {parsedLink.supportedActions
+                        .filter((item) => !item.startsWith('pipeline-'))
+                        .map((item) => getActionMeta(item).label)
+                        .join(' · ')}
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <div className="tasks-no-link-banner">
+                <p>
+                  <strong>Leave all</strong> — rời toàn bộ group/channel của từng acc đã chọn.
+                  Không cần link mục tiêu.
+                </p>
+              </div>
+            )}
+
+            {actionMeta.needsEmoji ? (
               <div className="field tasks-field">
                 <span>Reaction</span>
                 <div className="tasks-emoji-picker">
@@ -448,37 +544,212 @@ export function TasksPage() {
               </div>
             ) : null}
 
-            {action === 'reply' || action === 'send' ? (
+            {actionMeta.needsMedia ? (
+              <div className="field tasks-field">
+                <span>File media</span>
+                <div className="tasks-file-upload">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,video/*,.pdf,.zip,.doc,.docx"
+                    disabled={running}
+                    onChange={(e) => handleMediaChange(e.target.files?.[0] ?? null)}
+                  />
+                  {mediaFile ? (
+                    <div className="tasks-file-preview">
+                      <span className="tasks-file-name">{mediaFile.name}</span>
+                      <span className="tasks-file-size">{formatFileSize(mediaFile.size)}</span>
+                      <button
+                        type="button"
+                        className="tasks-file-clear"
+                        disabled={running}
+                        onClick={() => {
+                          setMediaFile(null)
+                          if (fileInputRef.current) fileInputRef.current.value = ''
+                        }}
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="tasks-file-hint">Ảnh, video hoặc file — dùng chung cho mọi acc</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {needsTextField ? (
               <label className="field tasks-field">
-                <span>Nội dung</span>
+                <span>
+                  {action === 'send-media'
+                    ? 'Caption (tùy chọn)'
+                    : action === 'pipeline-join-send'
+                      ? 'Tin nhắn sau khi join'
+                      : action === 'reply' || action === 'pipeline-join-reply'
+                        ? 'Nội dung reply'
+                        : 'Nội dung'}
+                </span>
                 <textarea
                   rows={4}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={
-                    action === 'reply'
-                      ? 'Nội dung reply bài post…'
-                      : 'Tin nhắn gửi vào group/chat…'
+                    action === 'send-media'
+                      ? 'Caption kèm file (có thể để trống)…'
+                      : action === 'pipeline-join-send'
+                        ? 'Tin nhắn gửi vào group sau khi join…'
+                        : action === 'reply' || action === 'pipeline-join-reply'
+                          ? 'Nội dung reply bài post…'
+                          : 'Tin nhắn gửi vào group/chat…'
                   }
                   disabled={running}
+                  required={actionMeta.needsText}
                 />
               </label>
             ) : null}
 
-            <label className="field tasks-field tasks-field--inline">
-              <span>Delay giữa các acc</span>
-              <div className="tasks-delay-input">
-                <input
-                  type="number"
-                  min={0}
-                  max={120}
-                  value={delaySeconds}
-                  onChange={(e) => setDelaySeconds(Number(e.target.value) || 0)}
-                  disabled={running}
-                />
-                <span className="tasks-delay-unit">giây</span>
-              </div>
-            </label>
+            {actionMeta.isPipeline ? (
+              <label className="field tasks-field tasks-field--inline">
+                <span>Delay giữa các bước pipeline</span>
+                <div className="tasks-delay-input">
+                  <input
+                    type="number"
+                    min={0}
+                    max={60}
+                    value={pipelineStepDelaySeconds}
+                    onChange={(e) =>
+                      setPipelineStepDelaySeconds(Number(e.target.value) || 0)
+                    }
+                    disabled={running}
+                  />
+                  <span className="tasks-delay-unit">giây</span>
+                </div>
+              </label>
+            ) : null}
+
+            <div className="tasks-run-options">
+              <button
+                type="button"
+                className="tasks-run-options-toggle"
+                onClick={() => setShowRunOptions((prev) => !prev)}
+                aria-expanded={showRunOptions}
+              >
+                <span>Tùy chọn chạy</span>
+                <span className="tasks-run-options-chevron">
+                  {showRunOptions ? '▾' : '▸'}
+                </span>
+              </button>
+
+              {showRunOptions ? (
+                <div className="tasks-run-options-body">
+                  <label className="tasks-option-check">
+                    <input
+                      type="checkbox"
+                      checked={preCheckLive}
+                      onChange={(e) => setPreCheckLive(e.target.checked)}
+                      disabled={running}
+                    />
+                    <span>Pre-check live trước khi chạy (bỏ qua acc die)</span>
+                  </label>
+
+                  <label className="tasks-option-check">
+                    <input
+                      type="checkbox"
+                      checked={useRandomDelay}
+                      onChange={(e) => setUseRandomDelay(e.target.checked)}
+                      disabled={running}
+                    />
+                    <span>Random delay giữa các acc</span>
+                  </label>
+
+                  {useRandomDelay ? (
+                    <div className="tasks-delay-range">
+                      <label className="field tasks-field tasks-field--inline">
+                        <span>Min</span>
+                        <div className="tasks-delay-input">
+                          <input
+                            type="number"
+                            min={0}
+                            max={120}
+                            value={delayMinSeconds}
+                            onChange={(e) =>
+                              setDelayMinSeconds(Number(e.target.value) || 0)
+                            }
+                            disabled={running}
+                          />
+                          <span className="tasks-delay-unit">s</span>
+                        </div>
+                      </label>
+                      <label className="field tasks-field tasks-field--inline">
+                        <span>Max</span>
+                        <div className="tasks-delay-input">
+                          <input
+                            type="number"
+                            min={0}
+                            max={120}
+                            value={delayMaxSeconds}
+                            onChange={(e) =>
+                              setDelayMaxSeconds(Number(e.target.value) || 0)
+                            }
+                            disabled={running}
+                          />
+                          <span className="tasks-delay-unit">s</span>
+                        </div>
+                      </label>
+                    </div>
+                  ) : (
+                    <label className="field tasks-field tasks-field--inline">
+                      <span>Delay giữa các acc</span>
+                      <div className="tasks-delay-input">
+                        <input
+                          type="number"
+                          min={0}
+                          max={120}
+                          value={delaySeconds}
+                          onChange={(e) => setDelaySeconds(Number(e.target.value) || 0)}
+                          disabled={running}
+                        />
+                        <span className="tasks-delay-unit">giây</span>
+                      </div>
+                    </label>
+                  )}
+
+                  <div className="tasks-option-row">
+                    <label className="field tasks-field tasks-field--inline">
+                      <span>Retry khi lỗi</span>
+                      <div className="tasks-delay-input">
+                        <input
+                          type="number"
+                          min={0}
+                          max={3}
+                          value={retryAttempts}
+                          onChange={(e) => setRetryAttempts(Number(e.target.value) || 0)}
+                          disabled={running}
+                        />
+                        <span className="tasks-delay-unit">lần</span>
+                      </div>
+                    </label>
+
+                    <label className="field tasks-field tasks-field--inline">
+                      <span>Dừng sau N lỗi liên tiếp</span>
+                      <div className="tasks-delay-input">
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          value={stopAfterConsecutiveErrors}
+                          onChange={(e) =>
+                            setStopAfterConsecutiveErrors(Number(e.target.value) || 0)
+                          }
+                          disabled={running}
+                        />
+                        <span className="tasks-delay-unit">0 = tắt</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+            </div>
 
             <div className="tasks-run-actions">
               <button
@@ -505,7 +776,7 @@ export function TasksPage() {
             <h2>Tiến trình</h2>
             <p className="panel-meta">
               {progress.length > 0
-                ? `${progressStats.done} xong · ${progressStats.failed} lỗi`
+                ? `${progressStats.done} xong · ${progressStats.failed} lỗi · ${progressStats.skipped} bỏ qua`
                 : 'Chưa chạy task'}
             </p>
           </div>
@@ -551,7 +822,7 @@ export function TasksPage() {
           </>
         ) : (
           <div className="tasks-progress-empty">
-            <p>Chọn acc, nhập link và bấm <strong>Chạy</strong> để xem log từng tài khoản.</p>
+            <p>Chọn acc, cấu hình hành động và bấm <strong>Chạy</strong> để xem log từng tài khoản.</p>
           </div>
         )}
       </section>
