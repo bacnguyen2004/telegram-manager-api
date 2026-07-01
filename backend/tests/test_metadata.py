@@ -133,6 +133,22 @@ def test_list_audit_logs_and_group_scans(client):
     assert audit_body["data"]["total"] >= 2
     assert any(item["action"] == "auth.login" for item in audit_body["data"]["items"])
 
+    auth_only_res = client.get(
+        "/api/metadata/audit",
+        params={"phone": phone, "action_prefix": "auth.", "limit": 10},
+    )
+    assert auth_only_res.status_code == 200
+    auth_only_body = auth_only_res.json()
+    assert all(item["action"].startswith("auth.") for item in auth_only_body["data"]["items"])
+
+    success_res = client.get(
+        "/api/metadata/audit",
+        params={"phone": phone, "status": "success", "limit": 10},
+    )
+    assert success_res.status_code == 200
+    success_body = success_res.json()
+    assert all(item["status"] == "success" for item in success_body["data"]["items"])
+
     scan_res = client.get("/api/metadata/group-scans", params={"phone": phone, "limit": 5})
     assert scan_res.status_code == 200
     scan_body = scan_res.json()

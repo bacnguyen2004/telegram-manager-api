@@ -23,10 +23,23 @@ async def metadata_overview() -> dict:
 @router.get("/audit", response_model=ApiEnvelope[AuditLogsData])
 async def list_audit_logs(
     phone: str | None = Query(default=None, description="Loc theo so dien thoai"),
+    action_prefix: str | None = Query(
+        default=None,
+        description="Loc theo tien to hanh dong (vd. sessions., groups., auth.)",
+    ),
+    status: str | None = Query(default=None, description="Loc theo trang thai (vd. success, error)"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    data = AuditLogsData(**metadata_store.list_audit_logs(phone=phone, limit=limit, offset=offset))
+    data = AuditLogsData(
+        **metadata_store.list_audit_logs(
+            phone=phone,
+            action_prefix=action_prefix,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+    )
     return success_response(data.model_dump())
 
 

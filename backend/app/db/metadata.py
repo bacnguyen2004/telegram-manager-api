@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..config import settings
@@ -192,6 +193,8 @@ class MetadataStore:
         self,
         *,
         phone: str | None = None,
+        action_prefix: str | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -205,19 +208,35 @@ class MetadataStore:
             }
 
         phone = (phone or "").strip() or None
+        action_prefix = (action_prefix or "").strip() or None
+        status = (status or "").strip() or None
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
 
         try:
             with self._session() as session:
-                statement = select(AuditLog)
+                filters: list[Any] = []
                 if phone:
-                    statement = statement.where(AuditLog.phone == phone)
-                statement = statement.order_by(AuditLog.created_at.desc())
+                    filters.append(AuditLog.phone == phone)
+                if action_prefix:
+                    filters.append(AuditLog.action.startswith(action_prefix))
+                if status:
+                    filters.append(AuditLog.status == status)
 
-                rows = session.exec(statement).all()
-                total = len(rows)
-                page = rows[offset : offset + limit]
+                count_stmt = select(func.count()).select_from(AuditLog)
+                for clause in filters:
+                    count_stmt = count_stmt.where(clause)
+                total = session.exec(count_stmt).one()
+
+                statement = select(AuditLog)
+                for clause in filters:
+                    statement = statement.where(clause)
+                statement = (
+                    statement.order_by(AuditLog.created_at.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+                page = session.exec(statement).all()
 
                 return {
                     "database_enabled": True,

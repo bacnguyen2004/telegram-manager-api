@@ -390,12 +390,22 @@ export const api = {
     return request<MetadataOverviewData>('/metadata/overview')
   },
 
-  listAuditLogs(phone?: string, limit = 50, offset = 0) {
+  listAuditLogs(options?: {
+    phone?: string
+    actionPrefix?: string
+    status?: string
+    limit?: number
+    offset?: number
+  }) {
+    const limit = options?.limit ?? 50
+    const offset = options?.offset ?? 0
     const params = new URLSearchParams({
       limit: String(limit),
       offset: String(offset),
     })
-    if (phone?.trim()) params.set('phone', phone.trim())
+    if (options?.phone?.trim()) params.set('phone', options.phone.trim())
+    if (options?.actionPrefix?.trim()) params.set('action_prefix', options.actionPrefix.trim())
+    if (options?.status?.trim()) params.set('status', options.status.trim())
     return request<AuditLogsData>(`/metadata/audit?${params}`)
   },
 
