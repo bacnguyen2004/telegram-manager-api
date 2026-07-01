@@ -37,6 +37,83 @@ class SendMessageData(MessageActionData):
     pass
 
 
+class ForwardMessageRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    from_peer_id: str = Field(
+        ...,
+        description="Dialog nguon (id hoac username)",
+        examples=["123456789", "@username"],
+    )
+    to_peer_id: str = Field(
+        ...,
+        description="Dialog dich (id hoac username)",
+        examples=["987654321", "@other"],
+    )
+    message_id: int = Field(..., ge=1, description="ID tin nhan can forward")
+
+
+class ForwardMessagesRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    from_peer_id: str = Field(..., description="Dialog nguon")
+    to_peer_id: str = Field(..., description="Dialog dich")
+    message_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Danh sach ID tin can forward",
+    )
+
+
+class ForwardMessageData(MessageActionData):
+    from_peer_id: str
+    to_peer_id: str
+
+
+class ForwardMessagesData(MessageActionData):
+    from_peer_id: str
+    to_peer_id: str
+    forwarded_count: int = 0
+    message_ids: list[int] = Field(default_factory=list)
+
+
+class EditMessageRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    peer_id: str = Field(..., description="Dialog id hoac username")
+    message_id: int = Field(..., ge=1, description="ID tin nhan can sua")
+    text: str = Field(..., min_length=1, max_length=4096)
+
+
+class DeleteMessagesRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    peer_id: str = Field(..., description="Dialog id hoac username")
+    message_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Danh sach ID tin can xoa",
+    )
+
+
+class DeleteMessagesData(MessageActionData):
+    deleted_count: int = 0
+    message_ids: list[int] = Field(default_factory=list)
+
+
+class PinMessageRequest(BaseModel):
+    phone: str = Field(..., examples=["+84901234567"])
+    peer_id: str = Field(
+        ...,
+        description="Dialog id hoac username",
+        examples=["123456789", "@username"],
+    )
+    message_id: int = Field(..., ge=1, description="ID tin nhan can ghim")
+    unpin: bool = Field(False, description="True de bo ghim")
+
+
+class PinMessageData(MessageActionData):
+    pinned: bool = False
+
+
 class ReactMessageRequest(BaseModel):
     phone: str = Field(..., examples=["+84901234567"])
     peer_id: str = Field(
@@ -150,6 +227,14 @@ class PollOptionItem(BaseModel):
         None,
         description="ID muc todo neu la MessageMediaToDo",
     )
+    chosen: bool = Field(
+        False,
+        description="Acc hien tai da chon dap an nay",
+    )
+    voters: int | None = Field(
+        None,
+        description="So luot vote (neu Telegram cho xem thong ke)",
+    )
 
 
 class PollInfoData(BaseModel):
@@ -169,4 +254,16 @@ class PollInfoData(BaseModel):
     close_date: str | None = None
     options: list[PollOptionItem] = Field(default_factory=list)
     suggested_option_index: int | None = None
+    user_voted: bool = Field(
+        False,
+        description="Acc hien tai da vote / tick it nhat mot dap an",
+    )
+    total_voters: int | None = Field(
+        None,
+        description="Tong so nguoi da vote (neu co)",
+    )
+    can_view_stats: bool = Field(
+        False,
+        description="Co the hien thi so vote tung dap an",
+    )
     message: str

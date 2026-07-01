@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { renderLinkifiedText } from '../utils/linkifyText'
 
 const MAX_CHARS = 280
 const MAX_LINES = 5
@@ -14,14 +15,15 @@ interface MessageTextProps {
 export function MessageText({ text }: MessageTextProps) {
   const [expanded, setExpanded] = useState(false)
   const collapsible = needsCollapse(text)
+  const content = renderLinkifiedText(text)
 
   if (!collapsible) {
-    return <p className="message-text">{text}</p>
+    return <p className="message-text">{content}</p>
   }
 
   return (
     <div className="message-text-wrap">
-      <p className={`message-text${expanded ? '' : ' message-text--collapsed'}`}>{text}</p>
+      <p className={`message-text${expanded ? '' : ' message-text--collapsed'}`}>{content}</p>
       <button
         type="button"
         className="message-expand-btn"

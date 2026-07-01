@@ -62,6 +62,14 @@ class DialogMessageItem(BaseModel):
     has_media: bool
     has_photo: bool = False
     text: str
+    pinned: bool = False
+    is_poll: bool = False
+    reply_to_msg_id: int | None = None
+    reply_to_text: str = ""
+    reply_to_sender_name: str = ""
+    media_file_name: str = ""
+    edited: bool = False
+    edited_date: str = ""
     reactions: list[DialogMessageReactionItem] = []
 
 
@@ -76,6 +84,17 @@ class DialogMessagesData(BaseModel):
     reactions_policy: DialogReactionsPolicy = Field(
         default_factory=DialogReactionsPolicy
     )
+    pinned_messages: list[DialogMessageItem] = Field(default_factory=list)
+    message: str = ""
+
+
+class DialogPinnedMessagesData(BaseModel):
+    status: Literal["success", "error"]
+    phone: str
+    peer_id: str
+    total: int
+    messages: list[DialogMessageItem]
+    has_more_pinned: bool = False
     message: str = ""
 
 

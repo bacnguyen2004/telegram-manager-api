@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
+import { ForwardMessageModal } from '../components/ForwardMessageModal'
+import { JumpToMessageModal } from '../components/JumpToMessageModal'
+import { MediaGalleryModal } from '../components/MediaGalleryModal'
+import { MessageContextMenu, type MessageContextMenuState } from '../components/MessageContextMenu'
+import { MessageSelectionBar } from '../components/MessageSelectionBar'
+import { MessageMediaBlock } from '../components/MessageMediaBlock'
+import { MessagePollBlock } from '../components/MessagePollBlock'
 import { MessageReactionBar } from '../components/MessageReactionBar'
+import { MessageReplyQuote } from '../components/MessageReplyQuote'
 import { MessageText } from '../components/MessageText'
-import { Pagination } from '../components/Pagination'
 import { PhoneSelect } from '../components/PhoneSelect'
-import { usePagination } from '../hooks/usePagination'
+import { PinnedMessagesBar } from '../components/PinnedMessagesBar'
+import { PinnedMessagesPanel } from '../components/PinnedMessagesPanel'
 import type {
   DialogCounts,
   DialogItem,
@@ -13,9 +21,32 @@ import type {
   DialogReactionsPolicy,
 } from '../types/api'
 import { avatarHue, dialogInitials, mediaTypeLabel } from '../utils/avatar'
+import { clearDraft, loadDraft, saveDraft } from '../utils/dialogDraftStorage'
 import { mergeDialogsWithReadState, saveReadState } from '../utils/dialogReadStorage'
-import { inferHasMoreOlder, isStaleMessagesRequest } from '../utils/dialogMessages'
+import {
+  inferHasMoreOlder,
+  isStaleMessagesRequest,
+  mergeNewMessages,
+  mergeSearchMessageResults,
+  messageCopyText,
+  PINNED_MESSAGES_PAGE_SIZE,
+  planPartialMarkRead,
+  resolveReplyQuote,
+} from '../utils/dialogMessages'
+import {
+  CHAT_MEDIA_ACCEPT,
+  chatMediaKindLabel,
+  detectChatMediaKind,
+  formatFileSize,
+  validateChatMediaFile,
+  type ChatMediaKind,
+} from '../utils/chatMedia'
 import { canReactWith, reactionsHint } from '../utils/reactions'
+import { buildChatTimeline } from '../utils/chatTimeline'
+import {
+  useDialogMessageStream,
+  type DialogPreviewPatch,
+} from '../hooks/useDialogMessageStream'
 
 type KindFilter = 'all' | 'private' | 'bot' | 'group' | 'channel'
 
@@ -94,12 +125,44 @@ export function DialogsPage() {
   const [reactionsPolicy, setReactionsPolicy] = useState<DialogReactionsPolicy | null>(
     null,
   )
-  const [selectedImage, setSelectedImage] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [selectedMedia, setSelectedMedia] = useState<File | null>(null)
+  const [selectedMediaKind, setSelectedMediaKind] = useState<ChatMediaKind | null>(null)
+  const [mediaPreview, setMediaPreview] = useState<string | null>(null)
+  const [unreadOnly, setUnreadOnly] = useState(false)
+  const [messageSearch, setMessageSearch] = useState('')
+  const [messageSearchIndex, setMessageSearchIndex] = useState(0)
+  const [forwardMessage, setForwardMessage] = useState<DialogMessageItem | null>(null)
+  const [forwardMessages, setForwardMessages] = useState<DialogMessageItem[]>([])
+  const [forwarding, setForwarding] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(
+    () => new Set(),
+  )
+  const [editingMessage, setEditingMessage] = useState<DialogMessageItem | null>(null)
+  const [showJumpModal, setShowJumpModal] = useState(false)
+  const [jumpingMessages, setJumpingMessages] = useState(false)
+  const [refreshingDialogs, setRefreshingDialogs] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [pinningId, setPinningId] = useState<number | null>(null)
+  const [showGallery, setShowGallery] = useState(false)
+  const [pinnedMessages, setPinnedMessages] = useState<DialogMessageItem[]>([])
+  const [pinnedIndex, setPinnedIndex] = useState(0)
+  const [showPinnedBar, setShowPinnedBar] = useState(true)
+  const [showPinnedList, setShowPinnedList] = useState(false)
+  const [hasMorePinned, setHasMorePinned] = useState(false)
+  const [loadingMorePinned, setLoadingMorePinned] = useState(false)
+  const [jumpingToPinnedId, setJumpingToPinnedId] = useState<number | null>(null)
+  const [messageMenu, setMessageMenu] = useState<MessageContextMenuState | null>(null)
+  const messagesSnapshotRef = useRef<DialogMessageItem[]>([])
+  const hasMoreOlderSnapshotRef = useRef(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const messageSearchInputRef = useRef<HTMLInputElement>(null)
+  const composeInputRef = useRef<HTMLTextAreaElement>(null)
+  const draftSaveTimerRef = useRef<number | null>(null)
   const messagesScrollRef = useRef<HTMLDivElement>(null)
+  const loadOlderSentinelRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<number, HTMLLIElement>>(new Map())
   const scrollIntentRef = useRef<'last-read' | 'latest' | null>(null)
   const openingUnreadRef = useRef(0)
@@ -114,6 +177,20 @@ export function DialogsPage() {
   const [showJumpBtn, setShowJumpBtn] = useState(false)
   const [pendingUnread, setPendingUnread] = useState(0)
   const [loadedPhotoIds, setLoadedPhotoIds] = useState<Set<number>>(() => new Set())
+  const [loadedMediaIds, setLoadedMediaIds] = useState<Set<number>>(() => new Set())
+  const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null)
+  const [streamMinId, setStreamMinId] = useState(0)
+  const [serverSearchResults, setServerSearchResults] = useState<DialogMessageItem[]>([])
+  const [serverSearchLoading, setServerSearchLoading] = useState(false)
+  const isAtBottomRef = useRef(true)
+
+  useEffect(() => {
+    messagesSnapshotRef.current = messages
+  }, [messages])
+
+  useEffect(() => {
+    hasMoreOlderSnapshotRef.current = hasMoreOlder
+  }, [hasMoreOlder])
 
   const SCROLL_BOTTOM_THRESHOLD = 56
   const SCROLL_TOP_THRESHOLD = 72
@@ -137,6 +214,7 @@ export function DialogsPage() {
   const filteredDialogs = useMemo(() => {
     const q = search.trim().toLowerCase()
     return dialogs.filter((dialog) => {
+      if (unreadOnly && dialog.unread_count <= 0) return false
       if (filter !== 'all' && dialog.kind !== filter) return false
       if (!q) return true
       return (
@@ -145,23 +223,53 @@ export function DialogsPage() {
         dialog.last_message.toLowerCase().includes(q)
       )
     })
-  }, [dialogs, filter, search])
+  }, [dialogs, filter, search, unreadOnly])
+
+  const unreadDialogCount = useMemo(
+    () => dialogs.filter((dialog) => dialog.unread_count > 0).length,
+    [dialogs],
+  )
+
+  const messageSearchMatches = useMemo(() => {
+    const q = messageSearch.trim().toLowerCase()
+    if (!q) return messages
+    const local = messages.filter((msg) => {
+      const haystack = [
+        msg.text,
+        msg.sender_name,
+        msg.content_type,
+        String(msg.id),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+    if (serverSearchResults.length > 0) {
+      return mergeSearchMessageResults(serverSearchResults, local)
+    }
+    return local
+  }, [messages, messageSearch, serverSearchResults])
+
+  const displayedMessages = messageSearch.trim() ? messageSearchMatches : messages
+
+  const chatTimeline = useMemo(() => {
+    if (messageSearch.trim()) {
+      return displayedMessages.map((msg) => ({
+        type: 'message' as const,
+        key: `msg-${msg.id}`,
+        msg,
+      }))
+    }
+    return buildChatTimeline(displayedMessages, unreadDividerAfterId)
+  }, [displayedMessages, messageSearch, unreadDividerAfterId])
+
+  const canPinMessages = selected?.kind === 'group' || selected?.kind === 'channel'
+  const showPinnedMessages = canPinMessages && showPinnedBar && pinnedMessages.length > 0
 
   const reactionPolicyHint = useMemo(
     () => reactionsHint(reactionsPolicy),
     [reactionsPolicy],
   )
-
-  const {
-    items: pagedDialogs,
-    page: dialogPage,
-    setPage: setDialogPage,
-    totalPages: dialogTotalPages,
-    from: dialogFrom,
-    to: dialogTo,
-    pageSize: dialogPageSize,
-    setPageSize: setDialogPageSize,
-  } = usePagination(filteredDialogs, 20)
 
   const isAtBottom = useCallback(() => {
     const el = messagesScrollRef.current
@@ -192,6 +300,26 @@ export function DialogsPage() {
     },
     [],
   )
+
+  const scrollMessageToCenterOfView = useCallback(
+    (target: HTMLElement, behavior: ScrollBehavior = 'smooth') => {
+      const container = messagesScrollRef.current
+      if (!container) return false
+      const top =
+        target.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop
+      const scrollTop = top - (container.clientHeight - target.offsetHeight) / 2
+      container.scrollTo({ top: Math.max(0, scrollTop), behavior })
+      return true
+    },
+    [],
+  )
+
+  const highlightMessageRow = useCallback((target: HTMLElement) => {
+    target.classList.add('message-row--highlight')
+    window.setTimeout(() => target.classList.remove('message-row--highlight'), 1600)
+  }, [])
 
   const resolveLastReadMessageId = useCallback(
     (unreadCount: number, readMaxId: number): number | null => {
@@ -280,9 +408,30 @@ export function DialogsPage() {
     [phone],
   )
 
+  const applyPartialMarkRead = useCallback(
+    (dialogId: string, plan: NonNullable<ReturnType<typeof planPartialMarkRead>>) => {
+      openingReadMaxIdRef.current = plan.maxId
+      openingUnreadRef.current = plan.remainingUnread
+      applyDialogReadState(dialogId, plan.maxId, plan.remainingUnread)
+      setPendingUnread(plan.remainingUnread)
+      if (plan.remainingUnread <= 0 && phone) {
+        saveReadState(phone, dialogId, plan.maxId)
+      }
+    },
+    [phone, applyDialogReadState],
+  )
+
   const commitMarkRead = useCallback(
-    async (dialogId: string, maxId: number) => {
-      if (!phone || !dialogId || maxId <= 0) return
+    async (dialogId: string, explicitMaxId?: number) => {
+      const readBaseline = openingReadMaxIdRef.current
+      const openingUnread = openingUnreadRef.current
+      const plan = planPartialMarkRead(
+        messages,
+        readBaseline,
+        openingUnread,
+        explicitMaxId,
+      )
+      if (!phone || !dialogId || !plan || plan.maxId <= 0) return
 
       if (markPartialTimerRef.current) {
         window.clearTimeout(markPartialTimerRef.current)
@@ -293,22 +442,26 @@ export function DialogsPage() {
         markReadTimerRef.current = null
       }
 
-      applyDialogReadState(dialogId, maxId, 0)
-      setPendingUnread(0)
+      applyPartialMarkRead(dialogId, plan)
+
+      if (!plan.syncToServer) return
 
       try {
-        const res = await api.markDialogRead(phone, dialogId, maxId)
+        const res = await api.markDialogRead(phone, dialogId, plan.maxId)
         if (!res.success || !res.data || res.data.status === 'error') return
 
-        const readMaxId = res.data.read_inbox_max_id || maxId
+        const readMaxId = res.data.read_inbox_max_id || plan.maxId
         const unreadCount = res.data.unread_count ?? 0
+        openingReadMaxIdRef.current = readMaxId
+        openingUnreadRef.current = unreadCount
         applyDialogReadState(dialogId, readMaxId, unreadCount)
+        setPendingUnread(unreadCount)
         if (unreadCount <= 0) saveReadState(phone, dialogId, readMaxId)
       } catch {
         // UI đã optimistic; localStorage vẫn giữ trạng thái đã đọc
       }
     },
-    [phone, applyDialogReadState],
+    [phone, messages, applyPartialMarkRead, applyDialogReadState],
   )
 
   const getScrollUnreadState = useCallback(() => {
@@ -357,12 +510,13 @@ export function DialogsPage() {
       const latestId = messages[messages.length - 1]?.id
       if (!latestId) return
 
-      const targetId = maxId && maxId > 0 ? maxId : latestId
-      const unread = selected?.unread_count ?? openingUnreadRef.current
       const readMaxId = selected?.read_inbox_max_id ?? openingReadMaxIdRef.current
-      if (unread <= 0 && readMaxId >= targetId) return
+      const unread = selected?.unread_count ?? openingUnreadRef.current
+      const plan = planPartialMarkRead(messages, readMaxId, unread, maxId)
+      if (!plan) return
+      if (unread <= 0 && readMaxId >= plan.maxId) return
 
-      await commitMarkRead(dialogId, targetId)
+      await commitMarkRead(dialogId, maxId)
     },
     [phone, selected, messages, commitMarkRead],
   )
@@ -413,15 +567,19 @@ export function DialogsPage() {
 
   const updateJumpButton = useCallback(() => {
     const atBottom = isAtBottom()
+    isAtBottomRef.current = atBottom
     setShowJumpBtn(!atBottom)
 
     if (!selected || messages.length === 0) return
 
     if (atBottom) {
-      const latestId = messages[messages.length - 1]?.id ?? 0
-      if (latestId > 0) applyDialogReadState(selected.id, latestId, 0)
-      setPendingUnread(0)
-      markAsReadDebounced()
+      const readBaseline = openingReadMaxIdRef.current
+      const openingUnread = openingUnreadRef.current
+      const plan = planPartialMarkRead(messages, readBaseline, openingUnread)
+      if (plan && plan.maxId > 0) {
+        applyPartialMarkRead(selected.id, plan)
+        if (plan.syncToServer) markAsReadDebounced()
+      }
       return
     }
 
@@ -435,7 +593,7 @@ export function DialogsPage() {
     isAtBottom,
     selected,
     messages,
-    applyDialogReadState,
+    applyPartialMarkRead,
     syncUnreadBadge,
     getScrollUnreadState,
     markAsReadDebounced,
@@ -455,7 +613,7 @@ export function DialogsPage() {
 
   const loadOlderMessages = useCallback(async () => {
     if (!phone || !selected || messages.length === 0 || !hasMoreOlder) return
-    if (loadingOlderRef.current || loadingMessages) return
+    if (loadingOlderRef.current || loadingMessages || messageSearch.trim()) return
 
     const dialogId = selected.id
     const requestSeq = messagesRequestSeqRef.current
@@ -500,10 +658,20 @@ export function DialogsPage() {
         ),
       )
 
+      const existingIds = new Set(messages.map((msg) => msg.id))
+      const uniqueOlder = older.filter((msg) => !existingIds.has(msg.id))
+      if (uniqueOlder.length === 0) {
+        setHasMoreOlder(false)
+        hasMoreOlderSnapshotRef.current = false
+        return
+      }
+
       setMessages((prev) => {
-        const existingIds = new Set(prev.map((msg) => msg.id))
-        const uniqueOlder = older.filter((msg) => !existingIds.has(msg.id))
-        return [...uniqueOlder, ...prev]
+        const ids = new Set(prev.map((msg) => msg.id))
+        const freshOlder = older.filter((msg) => !ids.has(msg.id))
+        const merged = [...freshOlder, ...prev]
+        messagesSnapshotRef.current = merged
+        return merged
       })
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -520,6 +688,17 @@ export function DialogsPage() {
       if (!isMessagesRequestStale(requestSeq, dialogId)) {
         setLoadingOlder(false)
         loadingOlderRef.current = false
+        const container = messagesScrollRef.current
+        if (
+          container &&
+          hasMoreOlderSnapshotRef.current &&
+          container.scrollTop <= SCROLL_TOP_THRESHOLD &&
+          !messageSearch.trim()
+        ) {
+          window.requestAnimationFrame(() => {
+            void loadOlderMessages()
+          })
+        }
       }
     }
   }, [
@@ -528,40 +707,50 @@ export function DialogsPage() {
     messages,
     hasMoreOlder,
     loadingMessages,
+    messageSearch,
     isMessagesRequestStale,
   ])
 
   const handleMessagesScroll = useCallback(() => {
     updateJumpButton()
+  }, [updateJumpButton])
 
-    const container = messagesScrollRef.current
+  useEffect(() => {
+    const root = messagesScrollRef.current
+    const sentinel = loadOlderSentinelRef.current
     if (
-      !container ||
-      loadingOlderRef.current ||
-      loadingMessages ||
+      !root ||
+      !sentinel ||
+      !selected ||
       !hasMoreOlder ||
-      !selected
+      loadingMessages ||
+      messageSearch.trim()
     ) {
       return
     }
-    if (container.scrollTop > SCROLL_TOP_THRESHOLD) return
-    void loadOlderMessages()
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || loadingOlderRef.current) return
+        void loadOlderMessages()
+      },
+      { root, threshold: 0, rootMargin: '96px 0px 0px 0px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
   }, [
-    updateJumpButton,
-    loadingMessages,
+    selected?.id,
     hasMoreOlder,
-    selected,
+    loadingMessages,
+    messageSearch,
     loadOlderMessages,
   ])
 
   const handleJumpToLatest = () => {
-    const latestId = messages[messages.length - 1]?.id ?? 0
     scrollToLatest('smooth')
-    if (selected && latestId > 0) {
-      applyDialogReadState(selected.id, latestId, 0)
+    if (selected) {
+      void commitMarkRead(selected.id)
     }
-    setPendingUnread(0)
-    void markAsRead(latestId)
     window.setTimeout(updateJumpButton, 350)
   }
 
@@ -570,23 +759,285 @@ export function DialogsPage() {
     setSuccess('')
   }
 
-  function clearSelectedImage() {
-    if (imagePreview) URL.revokeObjectURL(imagePreview)
-    setSelectedImage(null)
-    setImagePreview(null)
+  function clearSelectedMedia() {
+    if (mediaPreview) URL.revokeObjectURL(mediaPreview)
+    setSelectedMedia(null)
+    setSelectedMediaKind(null)
+    setMediaPreview(null)
     if (imageInputRef.current) imageInputRef.current.value = ''
   }
 
   useEffect(() => {
     return () => {
-      if (imagePreview) URL.revokeObjectURL(imagePreview)
+      if (mediaPreview) URL.revokeObjectURL(mediaPreview)
     }
-  }, [imagePreview])
+  }, [mediaPreview])
+
+  useEffect(() => {
+    setMessageSearchIndex(0)
+  }, [messageSearch, selected?.id])
+
+  useEffect(() => {
+    if (!phone || !selected) return
+    if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current)
+    draftSaveTimerRef.current = window.setTimeout(() => {
+      saveDraft(phone, selected.id, draftText)
+    }, 400)
+    return () => {
+      if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current)
+    }
+  }, [phone, selected, draftText])
+
+  const refreshDialogsList = useCallback(async (quiet = false) => {
+    if (!phone) return
+    if (!quiet) setRefreshingDialogs(true)
+    try {
+      const res = await api.listDialogs(phone)
+      if (!res.success || !res.data || res.data.status === 'error') return
+      const merged = mergeDialogsWithReadState(phone, res.data.dialogs)
+      setDialogs(merged)
+      setCounts(res.data.counts)
+      setSelected((prev) => {
+        if (!prev) return prev
+        return merged.find((item) => item.id === prev.id) ?? prev
+      })
+    } catch {
+      if (!quiet) setError('Không làm mới được danh sách chat')
+    } finally {
+      if (!quiet) setRefreshingDialogs(false)
+    }
+  }, [phone])
+
+  useEffect(() => {
+    if (!phone || dialogs.length === 0) return
+    const timer = window.setInterval(() => {
+      void refreshDialogsList(true)
+    }, 30000)
+    return () => window.clearInterval(timer)
+  }, [phone, dialogs.length, refreshDialogsList])
+
+  const handleStreamMessages = useCallback(
+    (incoming: DialogMessageItem[], preview: DialogPreviewPatch | null) => {
+      const dialogId = selectedDialogIdRef.current
+      const requestSeq = messagesRequestSeqRef.current
+      if (!dialogId) return
+
+      const wasAtBottom = isAtBottomRef.current
+      setMessages((prev) => {
+        const merged = mergeNewMessages(prev, incoming)
+        messagesSnapshotRef.current = merged
+        return merged
+      })
+
+      const incomingUnread = incoming.filter((msg) => !msg.outgoing).length
+      if (preview) {
+        const isOpenChat = preview.peer_id === dialogId
+        const patchDialog = (dialog: DialogItem): DialogItem => {
+          if (dialog.id !== preview.peer_id) return dialog
+          const nextUnread =
+            isOpenChat && wasAtBottom ? 0 : dialog.unread_count + incomingUnread
+          return {
+            ...dialog,
+            last_message: preview.last_message || dialog.last_message,
+            last_message_id: preview.last_message_id ?? dialog.last_message_id,
+            date: preview.date || dialog.date,
+            unread_count: nextUnread,
+          }
+        }
+        setDialogs((prev) => prev.map(patchDialog))
+        setSelected((prev) => (prev?.id === preview.peer_id ? patchDialog(prev) : prev))
+      }
+
+      if (wasAtBottom) {
+        window.requestAnimationFrame(() => scrollToLatest('auto'))
+      } else if (incomingUnread > 0) {
+        setShowJumpBtn(true)
+        setPendingUnread((prev) => prev + incomingUnread)
+      }
+
+      if (requestSeq !== messagesRequestSeqRef.current) return
+    },
+    [scrollToLatest],
+  )
+
+  useDialogMessageStream({
+    phone,
+    peerId: selected?.id ?? '',
+    minId: streamMinId,
+    enabled: Boolean(
+      phone &&
+        selected &&
+        streamMinId > 0 &&
+        !loadingMessages &&
+        !selectMode &&
+        !messageSearch.trim(),
+    ),
+    onMessages: handleStreamMessages,
+  })
+
+  useEffect(() => {
+    if (!selected || messages.length === 0) {
+      setStreamMinId(0)
+      return
+    }
+    setStreamMinId((prev) =>
+      prev > 0 ? prev : messages[messages.length - 1].id,
+    )
+  }, [selected?.id, messages])
+
+  useEffect(() => {
+    const q = messageSearch.trim()
+    if (q.length < 2 || !phone || !selected) {
+      setServerSearchResults([])
+      setServerSearchLoading(false)
+      return
+    }
+
+    setServerSearchLoading(true)
+    const dialogId = selected.id
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await api.searchDialogMessages(phone, dialogId, q)
+          if (dialogId !== selectedDialogIdRef.current) return
+          if (res.success && res.data?.status === 'success') {
+            setServerSearchResults(res.data.messages)
+          } else {
+            setServerSearchResults([])
+          }
+        } catch {
+          setServerSearchResults([])
+        } finally {
+          setServerSearchLoading(false)
+        }
+      })()
+    }, 400)
+
+    return () => window.clearTimeout(timer)
+  }, [messageSearch, phone, selected?.id])
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedMessageIds(new Set())
+  }, [])
+
+  const enterSelectMode = useCallback((initialMessageId?: number) => {
+    setSelectMode(true)
+    setSelectedMessageIds(
+      initialMessageId ? new Set([initialMessageId]) : new Set(),
+    )
+    setForwardMessage(null)
+    setForwardMessages([])
+    resetAlerts()
+  }, [])
+
+  const canEditMessage = useCallback((msg: DialogMessageItem) => {
+    if (!msg.outgoing) return false
+    const text = messageCopyText(msg)
+    return text.length > 0
+  }, [])
+
+  const startEditMessage = useCallback((msg: DialogMessageItem) => {
+    if (!canEditMessage(msg)) return
+    setEditingMessage(msg)
+    setReplyTo(null)
+    setDraftText(messageCopyText(msg))
+    clearSelectedMedia()
+    resetAlerts()
+    window.setTimeout(() => composeInputRef.current?.focus(), 0)
+  }, [canEditMessage])
+
+  const cancelEdit = useCallback(() => {
+    setEditingMessage(null)
+    if (phone && selected) {
+      setDraftText(loadDraft(phone, selected.id))
+    } else {
+      setDraftText('')
+    }
+  }, [phone, selected])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase()
+      const inField = tag === 'input' || tag === 'textarea' || target?.isContentEditable
+
+      if (event.key === 'Escape') {
+        if (messageMenu) {
+          setMessageMenu(null)
+          event.preventDefault()
+          return
+        }
+        if (showJumpModal) {
+          setShowJumpModal(false)
+          event.preventDefault()
+          return
+        }
+        if (selectMode) {
+          exitSelectionMode()
+          event.preventDefault()
+          return
+        }
+        if (editingMessage) {
+          cancelEdit()
+          event.preventDefault()
+          return
+        }
+        if (replyTo) {
+          setReplyTo(null)
+          event.preventDefault()
+        }
+        return
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        if (selected && messages.length > 0) {
+          event.preventDefault()
+          messageSearchInputRef.current?.focus()
+        }
+        return
+      }
+
+      if (
+        event.key === 'ArrowUp' &&
+        inField &&
+        target === composeInputRef.current &&
+        !replyTo &&
+        !selectedMedia &&
+        !editingMessage &&
+        !draftText.trim()
+      ) {
+        const lastOutgoing = [...messages].reverse().find((msg) => canEditMessage(msg))
+        if (lastOutgoing) {
+          event.preventDefault()
+          startEditMessage(lastOutgoing)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [
+    messageMenu,
+    showJumpModal,
+    selectMode,
+    editingMessage,
+    replyTo,
+    selected,
+    messages,
+    draftText,
+    selectedMedia,
+    exitSelectionMode,
+    cancelEdit,
+    canEditMessage,
+    startEditMessage,
+  ])
 
   useEffect(() => {
     return () => {
       if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current)
       if (markPartialTimerRef.current) window.clearTimeout(markPartialTimerRef.current)
+      if (draftSaveTimerRef.current) window.clearTimeout(draftSaveTimerRef.current)
     }
   }, [])
 
@@ -609,23 +1060,199 @@ export function DialogsPage() {
     }, 80)
   }, [loadingMessages, messages.length, selected, scrollToLastRead, scrollToLatest, updateJumpButton])
 
-  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleMediaSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setError('Chỉ chọn file ảnh (JPEG, PNG, WebP, GIF).')
-      clearSelectedImage()
+    const validationError = validateChatMediaFile(file)
+    if (validationError) {
+      setError(validationError)
+      clearSelectedMedia()
       return
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Ảnh tối đa 10MB.')
-      clearSelectedImage()
+    const kind = detectChatMediaKind(file)
+    if (!kind) {
+      setError('Không nhận dạng được loại file.')
+      clearSelectedMedia()
       return
     }
     resetAlerts()
-    if (imagePreview) URL.revokeObjectURL(imagePreview)
-    setSelectedImage(file)
-    setImagePreview(URL.createObjectURL(file))
+    if (mediaPreview) URL.revokeObjectURL(mediaPreview)
+    setSelectedMedia(file)
+    setSelectedMediaKind(kind)
+    setMediaPreview(kind === 'image' ? URL.createObjectURL(file) : null)
+  }
+
+  const waitForScrollToMessage = useCallback(
+    (messageId: number, maxAttempts = 80): Promise<boolean> =>
+      new Promise((resolve) => {
+        const tryScroll = (attempt: number) => {
+          const target = messageRefs.current.get(messageId)
+          if (target) {
+            scrollMessageToCenterOfView(target, 'smooth')
+            highlightMessageRow(target)
+            resolve(true)
+            return
+          }
+          if (attempt >= maxAttempts) {
+            resolve(false)
+            return
+          }
+          window.requestAnimationFrame(() => tryScroll(attempt + 1))
+        }
+        tryScroll(0)
+      }),
+    [highlightMessageRow, scrollMessageToCenterOfView],
+  )
+
+  const scrollToMessageIdWithRetry = useCallback(
+    (messageId: number) => {
+      void waitForScrollToMessage(messageId)
+    },
+    [waitForScrollToMessage],
+  )
+
+  function scrollToMessageId(messageId: number) {
+    scrollToMessageIdWithRetry(messageId)
+  }
+
+  const fetchOlderMessageBatch = useCallback(async (): Promise<DialogMessageItem[]> => {
+    if (!phone || !selected) return []
+    const dialogId = selected.id
+    const requestSeq = messagesRequestSeqRef.current
+    const offsetId = messagesSnapshotRef.current[0]?.id
+    if (!offsetId) return []
+
+    const res = await api.getDialogMessages(
+      phone,
+      dialogId,
+      MESSAGES_OLDER_LIMIT,
+      offsetId,
+    )
+    if (
+      requestSeq !== messagesRequestSeqRef.current ||
+      dialogId !== selectedDialogIdRef.current
+    ) {
+      return []
+    }
+    if (!res.success || !res.data || res.data.status === 'error') return []
+
+    const older = res.data.messages
+    if (older.length === 0) {
+      setHasMoreOlder(false)
+      hasMoreOlderSnapshotRef.current = false
+      return []
+    }
+
+    const more = inferHasMoreOlder(
+      older.length,
+      MESSAGES_OLDER_LIMIT,
+      res.data.has_more_older,
+    )
+    setHasMoreOlder(more)
+    hasMoreOlderSnapshotRef.current = more
+
+    setMessages((prev) => {
+      const existingIds = new Set(prev.map((msg) => msg.id))
+      const uniqueOlder = older.filter((msg) => !existingIds.has(msg.id))
+      const merged = [...uniqueOlder, ...prev]
+      messagesSnapshotRef.current = merged
+      return merged
+    })
+    return older
+  }, [phone, selected])
+
+  const waitForDomPaint = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => resolve())
+        })
+      }),
+    [],
+  )
+
+  const navigateToPinnedMessage = useCallback(
+    async (messageId: number) => {
+      if (!phone || !selected) return
+
+      const index = pinnedMessages.findIndex((msg) => msg.id === messageId)
+      if (index >= 0) setPinnedIndex(index)
+      setShowPinnedList(false)
+      setMessageSearch('')
+      setJumpingToPinnedId(messageId)
+      resetAlerts()
+
+      const pinnedMeta = pinnedMessages.find((msg) => msg.id === messageId)
+
+      try {
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          const current = messagesSnapshotRef.current
+          if (current.some((msg) => msg.id === messageId)) {
+            await waitForDomPaint()
+            if (await waitForScrollToMessage(messageId)) return
+            break
+          }
+
+          const oldestId = current[0]?.id
+          if (
+            oldestId != null &&
+            messageId < oldestId &&
+            hasMoreOlderSnapshotRef.current
+          ) {
+            const older = await fetchOlderMessageBatch()
+            if (older.length === 0) break
+            await waitForDomPaint()
+            continue
+          }
+
+          if (pinnedMeta) {
+            setMessages((prev) => {
+              if (prev.some((msg) => msg.id === messageId)) return prev
+              const merged = [...prev, pinnedMeta].sort((a, b) => a.id - b.id)
+              messagesSnapshotRef.current = merged
+              return merged
+            })
+            await waitForDomPaint()
+            if (await waitForScrollToMessage(messageId)) return
+            break
+          }
+          break
+        }
+        setError('Không tìm thấy tin ghim — thử «Tải tin cũ hơn» rồi chọn lại.')
+      } finally {
+        setJumpingToPinnedId(null)
+      }
+    },
+    [
+      phone,
+      selected,
+      pinnedMessages,
+      fetchOlderMessageBatch,
+      waitForDomPaint,
+      waitForScrollToMessage,
+    ],
+  )
+
+  async function goToSearchMatch(direction: 1 | -1) {
+    if (messageSearchMatches.length === 0 || !phone || !selected) return
+    const nextIndex =
+      (messageSearchIndex + direction + messageSearchMatches.length) %
+      messageSearchMatches.length
+    const target = messageSearchMatches[nextIndex]
+    setMessageSearchIndex(nextIndex)
+
+    if (!messagesSnapshotRef.current.some((msg) => msg.id === target.id)) {
+      const loaded = await loadMessagesAround(
+        selected,
+        { aroundId: target.id },
+        target.id,
+      )
+      if (!loaded) {
+        setError('Không tải được tin để nhảy tới kết quả tìm kiếm.')
+        return
+      }
+    }
+    scrollToMessageId(target.id)
   }
 
   async function handleLoadDialogs(e: React.FormEvent) {
@@ -641,6 +1268,9 @@ export function DialogsPage() {
     setMessagesTitle('')
     setReactionsPolicy(null)
     setReplyTo(null)
+    setUnreadDividerAfterId(null)
+    setStreamMinId(0)
+    setServerSearchResults([])
     setLoadedPhotoIds(new Set())
     try {
       const res = await api.listDialogs(phone)
@@ -661,6 +1291,93 @@ export function DialogsPage() {
       setLoadingDialogs(false)
     }
   }
+
+  const mergePinnedMessages = useCallback(
+    (prev: DialogMessageItem[], incoming: DialogMessageItem[]) => {
+      const byId = new Map(prev.map((msg) => [msg.id, msg]))
+      for (const msg of incoming) byId.set(msg.id, msg)
+      return [...byId.values()].sort((a, b) => b.id - a.id)
+    },
+    [],
+  )
+
+  const applyPinnedMessages = useCallback(
+    (items: DialogMessageItem[], more = false) => {
+      setPinnedMessages(items)
+      setPinnedIndex(0)
+      setHasMorePinned(more)
+      if (items.length > 0) setShowPinnedBar(true)
+    },
+    [],
+  )
+
+  const loadPinnedMessages = useCallback(
+    async (dialog: DialogItem) => {
+      if (!phone || (dialog.kind !== 'group' && dialog.kind !== 'channel')) {
+        return
+      }
+      const dialogId = dialog.id
+      try {
+        const res = await api.getPinnedMessages(
+          phone,
+          dialogId,
+          PINNED_MESSAGES_PAGE_SIZE,
+        )
+        if (dialogId !== selectedDialogIdRef.current) return
+        if (!res.success || !res.data || res.data.status === 'error') return
+        applyPinnedMessages(
+          res.data.messages,
+          Boolean(res.data.has_more_pinned),
+        )
+      } catch {
+        /* giữ pinned_messages từ loadMessages nếu API riêng lỗi */
+      }
+    },
+    [phone, applyPinnedMessages],
+  )
+
+  const loadMorePinnedMessages = useCallback(async () => {
+    if (!phone || !selected || loadingMorePinned || !hasMorePinned) return
+    if (selected.kind !== 'group' && selected.kind !== 'channel') return
+    if (pinnedMessages.length === 0) return
+
+    const dialogId = selected.id
+    const skip = pinnedMessages.length
+    setLoadingMorePinned(true)
+    try {
+      const res = await api.getPinnedMessages(
+        phone,
+        dialogId,
+        PINNED_MESSAGES_PAGE_SIZE,
+        skip,
+      )
+      if (dialogId !== selectedDialogIdRef.current) return
+      const data = res.data
+      if (!res.success || !data || data.status === 'error') return
+      if (data.messages.length === 0) {
+        setHasMorePinned(false)
+        return
+      }
+      setPinnedMessages((prev) => {
+        const merged = mergePinnedMessages(prev, data.messages)
+        setHasMorePinned(
+          merged.length > prev.length && Boolean(data.has_more_pinned),
+        )
+        return merged
+      })
+    } catch {
+      setError('Không tải thêm tin ghim được.')
+    } finally {
+      setLoadingMorePinned(false)
+    }
+  }, [
+    phone,
+    selected,
+    pinnedMessages,
+    hasMorePinned,
+    loadingMorePinned,
+    mergePinnedMessages,
+  ])
 
   async function loadMessages(dialog: DialogItem, showLoading = true) {
     if (!phone) return false
@@ -692,6 +1409,12 @@ export function DialogsPage() {
         return false
       }
       setMessages(res.data.messages)
+      if (
+        showLoading &&
+        (dialog.kind === 'group' || dialog.kind === 'channel')
+      ) {
+        applyPinnedMessages(res.data.pinned_messages ?? [], false)
+      }
       setReactionsPolicy(res.data.reactions_policy ?? null)
       setHasMoreOlder(
         inferHasMoreOlder(
@@ -724,6 +1447,10 @@ export function DialogsPage() {
     const prevHadUnread =
       (selected?.unread_count ?? 0) > 0 || openingUnreadRef.current > 0
 
+    if (phone && prevDialogId && prevDialogId !== dialog.id) {
+      saveDraft(phone, prevDialogId, draftText)
+    }
+
     if (
       phone &&
       prevDialogId &&
@@ -732,16 +1459,28 @@ export function DialogsPage() {
       prevHadUnread &&
       pendingUnread <= 0
     ) {
-      void commitMarkRead(prevDialogId, prevLatestId)
+      void commitMarkRead(prevDialogId, prevLatestId > 0 ? prevLatestId : undefined)
     }
 
     const fresh = dialogs.find((item) => item.id === dialog.id) ?? dialog
     selectedDialogIdRef.current = fresh.id
     messagesRequestSeqRef.current += 1
     setSelected(fresh)
-    setDraftText('')
+    setDraftText(phone ? loadDraft(phone, fresh.id) : '')
+    setEditingMessage(null)
     setReplyTo(null)
-    clearSelectedImage()
+    clearSelectedMedia()
+    setMessageSearch('')
+    setServerSearchResults([])
+    setServerSearchLoading(false)
+    setStreamMinId(0)
+    const readMax = fresh.read_inbox_max_id ?? 0
+    setUnreadDividerAfterId(
+      readMax > 0 && fresh.unread_count > 0 ? readMax : null,
+    )
+    exitSelectionMode()
+    setForwardMessage(null)
+    setForwardMessages([])
     resetAlerts()
     setShowJumpBtn(false)
     setHasMoreOlder(false)
@@ -755,11 +1494,21 @@ export function DialogsPage() {
     setReactionsPolicy(null)
     messageRefs.current.clear()
     setLoadedPhotoIds(new Set())
-    await loadMessages(fresh)
+    setLoadedMediaIds(new Set())
+    setPinnedMessages([])
+    setPinnedIndex(0)
+    setHasMorePinned(false)
+    setShowPinnedList(false)
+    const loaded = await loadMessages(fresh)
+    if (loaded) void loadPinnedMessages(fresh)
   }
 
   function revealPhoto(messageId: number) {
     setLoadedPhotoIds((prev) => new Set(prev).add(messageId))
+  }
+
+  function revealMedia(messageId: number) {
+    setLoadedMediaIds((prev) => new Set(prev).add(messageId))
   }
 
   async function handleSendReaction(msg: DialogMessageItem, emoji: string) {
@@ -821,31 +1570,263 @@ export function DialogsPage() {
     }
   }
 
+  async function handleCopyMessage(msg: DialogMessageItem) {
+    const text = messageCopyText(msg)
+    if (!text) {
+      setError('Tin này không có chữ để copy')
+      setSuccess('')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      resetAlerts()
+      setSuccess('Đã copy tin nhắn')
+    } catch {
+      setError('Không copy được')
+      setSuccess('')
+    }
+  }
+
+  function openMessageMenu(event: React.MouseEvent, msg: DialogMessageItem) {
+    event.preventDefault()
+    setMessageMenu({ x: event.clientX, y: event.clientY, msg })
+  }
+
+  function handleReplyToMessage(msg: DialogMessageItem) {
+    setReplyTo(msg)
+    setDraftText('')
+    resetAlerts()
+  }
+
+  async function handleForwardSend(targets: DialogItem[]) {
+    if (!phone || !selected || targets.length === 0) return
+    const bulkIds = [...forwardMessages]
+      .sort((a, b) => a.id - b.id)
+      .map((msg) => msg.id)
+    const single = forwardMessage
+    if (bulkIds.length === 0 && !single) return
+
+    setForwarding(true)
+    resetAlerts()
+    let ok = 0
+    let fail = 0
+    try {
+      for (const target of targets) {
+        const res =
+          bulkIds.length > 0
+            ? await api.forwardMessages(phone, selected.id, target.id, bulkIds)
+            : await api.forwardMessage(phone, selected.id, target.id, single!.id)
+        if (res.success && res.data && res.data.status === 'success') ok += 1
+        else fail += 1
+      }
+      if (ok === 0) {
+        setError('Forward thất bại')
+        return
+      }
+      setSuccess(
+        fail > 0
+          ? `Đã forward tới ${ok} chat, ${fail} chat lỗi`
+          : `Đã forward tới ${ok} chat`,
+      )
+      setForwardMessage(null)
+      setForwardMessages([])
+      exitSelectionMode()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+    } finally {
+      setForwarding(false)
+    }
+  }
+
+  function toggleMessageSelection(messageId: number) {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(messageId)) next.delete(messageId)
+      else next.add(messageId)
+      return next
+    })
+  }
+
+  function openBulkForward() {
+    const items = messages.filter((msg) => selectedMessageIds.has(msg.id))
+    if (items.length === 0) return
+    setForwardMessages(items)
+    setForwardMessage(null)
+  }
+
+  async function handleBulkDelete() {
+    if (!phone || !selected || selectedMessageIds.size === 0) return
+    const ids = [...selectedMessageIds]
+    const deletable = messages.filter(
+      (msg) => ids.includes(msg.id) && msg.outgoing,
+    )
+    if (deletable.length === 0) {
+      setError('Chỉ xóa được tin do bạn gửi')
+      return
+    }
+    const confirmed = window.confirm(`Xóa ${deletable.length} tin đã chọn?`)
+    if (!confirmed) return
+
+    setBulkDeleting(true)
+    resetAlerts()
+    try {
+      const res = await api.deleteMessages(
+        phone,
+        selected.id,
+        deletable.map((msg) => msg.id),
+      )
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Xóa tin thất bại')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      if (replyTo && deletable.some((msg) => msg.id === replyTo.id)) setReplyTo(null)
+      setSuccess(res.data.message)
+      exitSelectionMode()
+      await loadMessages(selected, false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
+  async function loadMessagesAround(
+    dialog: DialogItem,
+    options: { aroundId?: number; offsetDate?: string },
+    scrollToId?: number,
+  ) {
+    if (!phone) return false
+    const dialogId = dialog.id
+    const requestSeq = messagesRequestSeqRef.current
+    setJumpingMessages(true)
+    try {
+      const res = await api.getDialogMessages(
+        phone,
+        dialogId,
+        MESSAGES_INITIAL_LIMIT,
+        0,
+        options,
+      )
+      if (
+        requestSeq !== messagesRequestSeqRef.current ||
+        dialogId !== selectedDialogIdRef.current
+      ) {
+        return false
+      }
+      if (!res.success || !res.data || res.data.status === 'error') {
+        setError(res.error ?? res.data?.message ?? 'Không tải được tin')
+        return false
+      }
+      setMessages(res.data.messages)
+      messagesSnapshotRef.current = res.data.messages
+      setHasMoreOlder(
+        inferHasMoreOlder(
+          res.data.messages.length,
+          MESSAGES_INITIAL_LIMIT,
+          res.data.has_more_older,
+        ),
+      )
+      hasMoreOlderSnapshotRef.current = inferHasMoreOlder(
+        res.data.messages.length,
+        MESSAGES_INITIAL_LIMIT,
+        res.data.has_more_older,
+      )
+      setMessagesTitle(res.data.title || dialog.title)
+      if (scrollToId) {
+        await waitForDomPaint()
+        await waitForScrollToMessage(scrollToId)
+      }
+      return true
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+      return false
+    } finally {
+      setJumpingMessages(false)
+    }
+  }
+
+  async function handleJumpToMessageId(messageId: number) {
+    if (!selected || messageId < 1) return
+    setShowJumpModal(false)
+    if (messages.some((msg) => msg.id === messageId)) {
+      await waitForScrollToMessage(messageId)
+      return
+    }
+    const loaded = await loadMessagesAround(selected, { aroundId: messageId }, messageId)
+    if (!loaded) {
+      await navigateToPinnedMessage(messageId)
+    }
+  }
+
+  async function handleJumpToDate(date: string) {
+    if (!selected) return
+    setShowJumpModal(false)
+    const loaded = await loadMessagesAround(selected, { offsetDate: date })
+    if (loaded) {
+      window.setTimeout(() => scrollToLatest('auto'), 120)
+    }
+  }
+
+  async function handlePinMessage(msg: DialogMessageItem, unpin = false) {
+    if (!phone || !selected) return
+    setPinningId(msg.id)
+    resetAlerts()
+    try {
+      const res = await api.pinMessage(phone, selected.id, msg.id, unpin)
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'Ghim tin thất bại')
+        return
+      }
+      if (res.data.status === 'error') {
+        setError(res.data.message)
+        return
+      }
+      setSuccess(res.data.message)
+      await loadMessages(selected, false)
+      void loadPinnedMessages(selected)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không kết nối được API.')
+    } finally {
+      setPinningId(null)
+    }
+  }
+
   async function handleSendMessage(e: React.FormEvent) {
     e.preventDefault()
     if (!phone || !selected) return
     const text = draftText.trim()
-    if (!text && !selectedImage) return
+    if (!text && !selectedMedia) return
+    if (editingMessage && selectedMedia) {
+      setError('Không sửa tin kèm file mới — chỉ sửa chữ')
+      return
+    }
 
+    const wasEditing = editingMessage
     setSending(true)
     resetAlerts()
     try {
-      const res = selectedImage
-        ? await api.sendMedia(
-            phone,
-            selected.id,
-            selectedImage,
-            text || undefined,
-            replyTo?.id,
-          )
-        : replyTo
-          ? await api.replyMessage(phone, selected.id, replyTo.id, text)
-          : await api.sendMessage(phone, selected.id, text)
+      const res = wasEditing
+        ? await api.editMessage(phone, selected.id, wasEditing.id, text)
+        : selectedMedia
+          ? await api.sendMedia(
+              phone,
+              selected.id,
+              selectedMedia,
+              text || undefined,
+              replyTo?.id,
+            )
+          : replyTo
+            ? await api.replyMessage(phone, selected.id, replyTo.id, text)
+            : await api.sendMessage(phone, selected.id, text)
       if (!res.success || !res.data) {
         setError(
           res.error ??
-            (selectedImage
-              ? 'Gửi ảnh thất bại'
+            (selectedMedia
+              ? 'Gửi media thất bại'
               : replyTo
                 ? 'Trả lời thất bại'
                 : 'Gửi tin thất bại'),
@@ -857,12 +1838,16 @@ export function DialogsPage() {
         return
       }
       setDraftText('')
+      clearDraft(phone, selected.id)
+      setEditingMessage(null)
       setReplyTo(null)
-      clearSelectedImage()
+      clearSelectedMedia()
       setSuccess(res.data.message)
-      scrollIntentRef.current = 'latest'
+      scrollIntentRef.current = wasEditing ? null : 'latest'
       await loadMessages(selected, false)
-      window.setTimeout(() => scrollToLatest('smooth'), 100)
+      if (!wasEditing) {
+        window.setTimeout(() => scrollToLatest('smooth'), 100)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không kết nối được API.')
     } finally {
@@ -921,6 +1906,15 @@ export function DialogsPage() {
                   {filteredDialogs.length} / {dialogs.length} chat
                 </p>
               </div>
+              <button
+                type="button"
+                className="btn btn--sm btn--ghost"
+                disabled={refreshingDialogs || !phone}
+                onClick={() => void refreshDialogsList()}
+                title="Làm mới danh sách chat"
+              >
+                {refreshingDialogs ? '…' : '↻'}
+              </button>
             </div>
 
             <div className="dialogs-toolbar">
@@ -938,6 +1932,15 @@ export function DialogsPage() {
                 />
               </div>
               <div className="dialogs-filters">
+                <button
+                  type="button"
+                  className={`dialogs-filter-btn dialogs-filter-btn--unread${unreadOnly ? ' dialogs-filter-btn--active' : ''}`}
+                  onClick={() => setUnreadOnly((value) => !value)}
+                  title="Chỉ hiện chat chưa đọc"
+                >
+                  Chưa đọc
+                  <span className="dialogs-filter-count">{unreadDialogCount}</span>
+                </button>
                 {FILTER_OPTIONS.map((item) => (
                   <button
                     key={item.id}
@@ -953,7 +1956,7 @@ export function DialogsPage() {
             </div>
 
             <ul className="dialogs-list">
-              {pagedDialogs.map((dialog) => (
+              {filteredDialogs.map((dialog) => (
                 <li key={dialog.id}>
                   <button
                     type="button"
@@ -1002,25 +2005,11 @@ export function DialogsPage() {
             {filteredDialogs.length === 0 && (
               <p className="muted dialogs-empty">Không có chat khớp bộ lọc.</p>
             )}
-
-            {filteredDialogs.length > 0 && (
-              <Pagination
-                className="pagination--compact"
-                page={dialogPage}
-                totalPages={dialogTotalPages}
-                total={filteredDialogs.length}
-                from={dialogFrom}
-                to={dialogTo}
-                onPageChange={setDialogPage}
-                pageSize={dialogPageSize}
-                pageSizeOptions={[20, 40, 60]}
-                onPageSizeChange={setDialogPageSize}
-              />
-            )}
           </div>
 
           <div className="dialogs-messages-panel">
             {selected ? (
+              <>
               <div className="chat-header">
                 <div
                   className="dialog-avatar dialog-avatar--lg"
@@ -1048,23 +2037,153 @@ export function DialogsPage() {
                     )}
                   </p>
                 </div>
-                {selected.link && (
-                  <a
-                    className="chat-header-link btn btn--sm btn--ghost"
-                    href={selected.link}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Mở Telegram
-                  </a>
-                )}
+                <div className="chat-header-actions">
+                  {canPinMessages && pinnedMessages.length > 0 && !showPinnedBar ? (
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost chat-pinned-reopen"
+                      onClick={() => {
+                        setShowPinnedBar(true)
+                        setShowPinnedList(true)
+                      }}
+                      title={`${pinnedMessages.length} tin ghim — xem danh sách`}
+                    >
+                      📌 {pinnedMessages.length}
+                    </button>
+                  ) : null}
+                  {canPinMessages && pinnedMessages.length > 0 && showPinnedBar ? (
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => setShowPinnedList(true)}
+                      title="Danh sách tin ghim"
+                    >
+                      Ghim
+                    </button>
+                  ) : null}
+                  {messages.length > 0 ? (
+                    <>
+                      <button
+                        type="button"
+                        className={`btn btn--sm btn--ghost${selectMode ? ' dialogs-filter-btn--active' : ''}`}
+                        onClick={() => {
+                          if (selectMode) exitSelectionMode()
+                          else enterSelectMode()
+                        }}
+                        title="Chọn nhiều tin"
+                      >
+                        {selectMode ? 'Hủy chọn' : 'Chọn'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        onClick={() => setShowJumpModal(true)}
+                        title="Nhảy tới tin #id hoặc ngày"
+                      >
+                        Nhảy tới
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        onClick={() => setShowGallery(true)}
+                        title="Xem ảnh/video đã tải"
+                      >
+                        Gallery
+                      </button>
+                    </>
+                  ) : null}
+                  {selected.link ? (
+                    <a
+                      className="chat-header-link btn btn--sm btn--ghost"
+                      href={selected.link}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Mở Telegram
+                    </a>
+                  ) : null}
+                </div>
               </div>
+              {selected && !loadingMessages && messages.length > 0 ? (
+                <div className="chat-search-bar">
+                  <input
+                    ref={messageSearchInputRef}
+                    type="search"
+                    className="chat-search-input"
+                    placeholder="Tìm trong chat… (Ctrl+F, ≥2 ký tự)"
+                    value={messageSearch}
+                    onChange={(e) => setMessageSearch(e.target.value)}
+                  />
+                  {messageSearch.trim() ? (
+                    <div className="chat-search-nav">
+                      <span className="muted">
+                        {serverSearchLoading
+                          ? 'Đang tìm trên Telegram…'
+                          : messageSearchMatches.length === 0
+                            ? '0 kết quả'
+                            : `${messageSearchIndex + 1}/${messageSearchMatches.length}${serverSearchResults.length > 0 ? ' · TG' : ''}`}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        disabled={messageSearchMatches.length === 0}
+                        onClick={() => goToSearchMatch(-1)}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        disabled={messageSearchMatches.length === 0}
+                        onClick={() => goToSearchMatch(1)}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        onClick={() => setMessageSearch('')}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              </>
             ) : (
               <div className="chat-header chat-header--empty">
                 <h2>Tin nhắn</h2>
                 <p className="chat-header-meta">Chọn hội thoại bên trái</p>
               </div>
             )}
+
+            {selected && showPinnedMessages ? (
+              <PinnedMessagesBar
+                messages={pinnedMessages}
+                activeIndex={pinnedIndex}
+                listOpen={showPinnedList}
+                navigating={jumpingToPinnedId != null}
+                onSelect={(messageId) => void navigateToPinnedMessage(messageId)}
+                onOpenList={() => setShowPinnedList((open) => !open)}
+                onClose={() => {
+                  setShowPinnedBar(false)
+                  setShowPinnedList(false)
+                }}
+              />
+            ) : null}
+
+            {selected && showPinnedList && pinnedMessages.length > 0 ? (
+              <PinnedMessagesPanel
+                messages={pinnedMessages}
+                loading={jumpingToPinnedId != null}
+                hasMore={hasMorePinned}
+                loadingMore={loadingMorePinned}
+                onLoadMore={() => void loadMorePinnedMessages()}
+                onSelect={(messageId) => void navigateToPinnedMessage(messageId)}
+                onClose={() => setShowPinnedList(false)}
+              />
+            ) : null}
 
             <div className="chat-body">
               {!selected && (
@@ -1081,53 +2200,77 @@ export function DialogsPage() {
                 </div>
               )}
 
-              {selected && !loadingMessages && messages.length === 0 && (
+              {selected && !loadingMessages && messages.length === 0 && pinnedMessages.length === 0 && (
                 <div className="empty-state empty-state--chat">
                   <ChatEmptyIcon />
                   <p>Chưa có tin nhắn trong hội thoại này</p>
                 </div>
               )}
 
-              {selected && !loadingMessages && messages.length > 0 && (
+              {selected && !loadingMessages && (messages.length > 0 || pinnedMessages.length > 0) && (
                 <>
-                  {hasMoreOlder && (
-                    <button
-                      type="button"
-                      className="chat-load-older-fab"
-                      onClick={() => void loadOlderMessages()}
-                      disabled={loadingOlder}
-                      title="Tải tin nhắn cũ hơn"
-                      aria-label="Tải tin nhắn cũ hơn"
-                    >
-                      {loadingOlder ? (
-                        <span className="spinner spinner--accent" aria-hidden />
-                      ) : (
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
-                          <path
-                            d="M12 19V5m0 0-6 6m6-6 6 6"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                      <span>{loadingOlder ? 'Đang tải…' : 'Tải tin cũ hơn'}</span>
-                    </button>
-                  )}
                   <div
                     ref={messagesScrollRef}
                     className="chat-messages-area"
                     onScroll={handleMessagesScroll}
                   >
+                    <div
+                      ref={loadOlderSentinelRef}
+                      className="chat-load-older-sentinel"
+                      aria-hidden
+                    />
+                    {loadingOlder ? (
+                      <div className="chat-load-older-status" role="status">
+                        <span className="spinner spinner--accent" aria-hidden />
+                        <span>Đang tải tin cũ hơn…</span>
+                      </div>
+                    ) : null}
+                    {selectMode ? (
+                      <div className="chat-select-banner">
+                        Chế độ chọn — bấm tin hoặc tick ☐ để chọn nhiều tin
+                      </div>
+                    ) : null}
+                    {messageSearch.trim() && displayedMessages.length === 0 ? (
+                      <div className="empty-state empty-state--chat-search">
+                        <p>Không tìm thấy tin khớp “{messageSearch.trim()}”.</p>
+                      </div>
+                    ) : null}
                     <ul className="messages-list">
-                    {messages.map((msg) => {
+                    {chatTimeline.map((item) => {
+                      if (item.type === 'date') {
+                        return (
+                          <li key={item.key} className="chat-date-divider" aria-label={item.label}>
+                            <span>{item.label}</span>
+                          </li>
+                        )
+                      }
+                      if (item.type === 'unread') {
+                        return (
+                          <li key={item.key} className="chat-unread-divider" aria-label="Tin mới">
+                            <span>Tin mới</span>
+                          </li>
+                        )
+                      }
+
+                      const msg = item.msg
+                      const isPoll = Boolean(msg.is_poll) || msg.content_type === 'poll'
                       const isPhoto =
-                        msg.has_photo ||
-                        msg.content_type === 'photo' ||
-                        (msg.has_media && msg.text === '[photo]')
+                        !isPoll &&
+                        (msg.has_photo ||
+                          msg.content_type === 'photo' ||
+                          (msg.has_media && msg.text === '[photo]'))
+                      const isRenderableMedia =
+                        !isPoll &&
+                        !isPhoto &&
+                        msg.has_media &&
+                        ['video', 'audio', 'sticker', 'document'].includes(msg.content_type)
+                      const replyQuote = resolveReplyQuote(msg, messages)
                       const displayText =
-                        isPhoto && (msg.text === '[photo]' || !msg.text) ? '' : msg.text
+                        isPoll
+                          ? ''
+                          : isPhoto && (msg.text === '[photo]' || !msg.text)
+                            ? ''
+                            : msg.text
                       return (
                         <li
                           key={msg.id}
@@ -1135,11 +2278,41 @@ export function DialogsPage() {
                             if (el) messageRefs.current.set(msg.id, el)
                             else messageRefs.current.delete(msg.id)
                           }}
-                          className={`message-row${msg.outgoing ? ' message-row--out' : ''}`}
+                          className={`message-row${msg.outgoing ? ' message-row--out' : ''}${selectMode ? ' message-row--select-mode' : ''}${msg.pinned ? ' message-row--pinned' : ''}${messageSearch.trim() && messageSearchMatches[messageSearchIndex]?.id === msg.id ? ' message-row--search-active' : ''}${selectedMessageIds.has(msg.id) ? ' message-row--selected' : ''}`}
+                          onContextMenu={(event) => {
+                            if (selectMode) event.preventDefault()
+                            else openMessageMenu(event, msg)
+                          }}
                         >
+                          {selectMode ? (
+                            <label
+                              className="message-select-check"
+                              onClick={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                toggleMessageSelection(msg.id)
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedMessageIds.has(msg.id)}
+                                readOnly
+                                tabIndex={-1}
+                              />
+                            </label>
+                          ) : null}
                           <div
-                            className={`message-bubble${isPhoto ? ' message-bubble--media' : ''}`}
+                            className={`message-bubble${isPhoto || isRenderableMedia ? ' message-bubble--media' : ''}${isPoll ? ' message-bubble--poll' : ''}${selectMode ? ' message-bubble--selectable' : ''}`}
+                            onClick={() => {
+                              if (selectMode) toggleMessageSelection(msg.id)
+                            }}
                           >
+                            {replyQuote ? (
+                              <MessageReplyQuote
+                                quote={replyQuote}
+                                onJumpTo={scrollToMessageId}
+                              />
+                            ) : null}
                             <div className="message-head">
                               {!msg.outgoing && (
                                 <span className="message-sender">
@@ -1149,10 +2322,27 @@ export function DialogsPage() {
                               {msg.outgoing && (
                                 <span className="message-you">Bạn</span>
                               )}
-                              <span className="message-date">{msg.date}</span>
+                              <span className="message-head-end">
+                                {msg.pinned ? (
+                                  <span className="message-pinned-badge" title="Tin đã ghim">
+                                    📌
+                                  </span>
+                                ) : null}
+                                {msg.edited ? (
+                                  <span
+                                    className="message-edited-badge"
+                                    title={msg.edited_date || 'Đã sửa'}
+                                  >
+                                    đã sửa
+                                  </span>
+                                ) : null}
+                                <span className="message-date">{msg.date}</span>
+                              </span>
                             </div>
                             {isPhoto && selected && (
-                              loadedPhotoIds.has(msg.id) ? (
+                              selectMode ? (
+                                <span className="message-photo-placeholder muted">📷 Ảnh</span>
+                              ) : loadedPhotoIds.has(msg.id) ? (
                                 <img
                                   className="message-photo"
                                   src={api.messagePhotoUrl(phone, selected.id, msg.id)}
@@ -1182,35 +2372,97 @@ export function DialogsPage() {
                                 </button>
                               )
                             )}
+                            {isPoll && selected ? (
+                              <MessagePollBlock
+                                phone={phone}
+                                peerId={selected.id}
+                                messageId={msg.id}
+                                question={msg.text}
+                                disabled={selectMode || sending}
+                              />
+                            ) : null}
                             {displayText ? (
                               <MessageText text={displayText} />
                             ) : (
-                              !isPhoto && <p className="message-text message-text--empty">—</p>
+                              !isPhoto && !isPoll && !isRenderableMedia ? (
+                                <p className="message-text message-text--empty">—</p>
+                              ) : null
                             )}
-                            {msg.has_media && !isPhoto && (
+                            {isRenderableMedia && selected ? (
+                              <MessageMediaBlock
+                                phone={phone}
+                                peerId={selected.id}
+                                messageId={msg.id}
+                                contentType={msg.content_type}
+                                fileName={msg.media_file_name}
+                                revealed={loadedMediaIds.has(msg.id)}
+                                selectMode={selectMode}
+                                onReveal={revealMedia}
+                                onLoaded={() => {
+                                  if (isAtBottom()) scrollToLatest('auto')
+                                }}
+                              />
+                            ) : null}
+                            {msg.has_media && !isPhoto && !isPoll && !isRenderableMedia ? (
                               <span className={`media-chip media-chip--${msg.content_type}`}>
                                 {mediaTypeLabel(msg.content_type)}
                               </span>
-                            )}
-                            <MessageReactionBar
-                              msg={msg}
-                              reactionsPolicy={reactionsPolicy}
-                              reactingId={reactingId}
-                              sending={sending}
-                              onReact={handleSendReaction}
-                            />
-                            <div className="message-actions">
+                            ) : null}
+                            {!selectMode ? (
+                              <MessageReactionBar
+                                msg={msg}
+                                reactionsPolicy={reactionsPolicy}
+                                reactingId={reactingId}
+                                sending={sending}
+                                onReact={handleSendReaction}
+                              />
+                            ) : null}
+                            {!selectMode ? (
+                            <div
+                              className="message-actions"
+                              onClick={(event) => event.stopPropagation()}
+                            >
                               <button
                                 type="button"
                                 className="btn btn--sm btn--ghost message-reply-btn"
-                                onClick={() => {
-                                  setReplyTo(msg)
-                                  setDraftText('')
-                                  resetAlerts()
-                                }}
+                                onClick={() => handleReplyToMessage(msg)}
                               >
                                 Trả lời
                               </button>
+                              <button
+                                type="button"
+                                className="btn btn--sm btn--ghost message-reply-btn"
+                                onClick={() => void handleCopyMessage(msg)}
+                              >
+                                Sao chép
+                              </button>
+                              {canEditMessage(msg) ? (
+                                <button
+                                  type="button"
+                                  className="btn btn--sm btn--ghost message-reply-btn"
+                                  onClick={() => startEditMessage(msg)}
+                                >
+                                  Sửa
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="btn btn--sm btn--ghost message-reply-btn"
+                                disabled={forwarding}
+                                onClick={() => setForwardMessage(msg)}
+                              >
+                                Forward
+                              </button>
+                              {canPinMessages ? (
+                                <button
+                                  type="button"
+                                  className="btn btn--sm btn--ghost message-reply-btn"
+                                  disabled={pinningId === msg.id || sending}
+                                  onClick={() => void handlePinMessage(msg, Boolean(msg.pinned))}
+                                >
+                                  {pinningId === msg.id ? '…' : msg.pinned ? 'Bỏ ghim' : 'Ghim'}
+                                </button>
+                              ) : null}
                               {msg.outgoing && (
                                 <button
                                   type="button"
@@ -1222,6 +2474,7 @@ export function DialogsPage() {
                                 </button>
                               )}
                             </div>
+                            ) : null}
                           </div>
                         </li>
                       )
@@ -1261,8 +2514,41 @@ export function DialogsPage() {
               )}
             </div>
 
-            {selected && (
+            {selected && selectMode ? (
+              <MessageSelectionBar
+                count={selectedMessageIds.size}
+                forwarding={forwarding}
+                deleting={bulkDeleting}
+                canDelete={messages.some(
+                  (msg) => selectedMessageIds.has(msg.id) && msg.outgoing,
+                )}
+                onForward={openBulkForward}
+                onDelete={() => void handleBulkDelete()}
+                onCancel={exitSelectionMode}
+              />
+            ) : null}
+
+            {selected && !selectMode && (
               <form className="message-compose" onSubmit={(e) => void handleSendMessage(e)}>
+                {editingMessage ? (
+                  <div className="reply-preview reply-preview--edit">
+                    <div>
+                      <p className="reply-preview-label">
+                        Sửa tin #{editingMessage.id}
+                      </p>
+                      <p className="reply-preview-text muted">
+                        Enter để lưu · Esc để hủy · ↑ khi ô trống để sửa tin gửi gần nhất
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost"
+                      onClick={cancelEdit}
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                ) : null}
                 {replyTo && (
                   <div className="reply-preview">
                     <div>
@@ -1286,23 +2572,33 @@ export function DialogsPage() {
                 <input
                   ref={imageInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  accept={CHAT_MEDIA_ACCEPT}
                   className="message-image-input"
-                  onChange={handleImageSelect}
+                  onChange={handleMediaSelect}
                   disabled={sending || loadingMessages}
                 />
-                {selectedImage && imagePreview && (
+                {selectedMedia && (
                   <div className="message-image-preview">
-                    <img src={imagePreview} alt={selectedImage.name} />
+                    {mediaPreview ? (
+                      <img src={mediaPreview} alt={selectedMedia.name} />
+                    ) : (
+                      <div className="message-file-preview">
+                        <span className="message-file-kind">
+                          {selectedMediaKind ? chatMediaKindLabel(selectedMediaKind) : 'File'}
+                        </span>
+                        <span className="muted">{selectedMedia.name}</span>
+                        <span className="muted">{formatFileSize(selectedMedia.size)}</span>
+                      </div>
+                    )}
                     <div className="message-image-preview-meta">
-                      <span className="muted">{selectedImage.name}</span>
+                      <span className="muted">{selectedMedia.name}</span>
                       <button
                         type="button"
                         className="btn btn--sm btn--ghost"
-                        onClick={clearSelectedImage}
+                        onClick={clearSelectedMedia}
                         disabled={sending}
                       >
-                        Bỏ ảnh
+                        Bỏ file
                       </button>
                     </div>
                   </div>
@@ -1311,7 +2607,7 @@ export function DialogsPage() {
                   <button
                     type="button"
                     className="btn btn--icon btn--ghost message-compose-attach"
-                    title="Chọn ảnh"
+                    title="Chọn ảnh, video hoặc file"
                     onClick={() => imageInputRef.current?.click()}
                     disabled={sending || loadingMessages}
                   >
@@ -1322,19 +2618,22 @@ export function DialogsPage() {
                     </svg>
                   </button>
                   <textarea
+                    ref={composeInputRef}
                     className="message-compose-input"
                     rows={1}
                     placeholder={
-                      selectedImage
-                        ? 'Thêm caption (tùy chọn)…'
-                        : replyTo
-                          ? 'Viết câu trả lời…'
-                          : 'Nhập tin nhắn…'
+                      editingMessage
+                        ? 'Sửa nội dung tin…'
+                        : selectedMedia
+                          ? 'Thêm caption (tùy chọn)…'
+                          : replyTo
+                            ? 'Viết câu trả lời…'
+                            : 'Nhập tin nhắn…'
                     }
                     value={draftText}
                     onChange={(e) => setDraftText(e.target.value)}
                     disabled={sending || loadingMessages}
-                    maxLength={selectedImage ? 1024 : 4096}
+                    maxLength={selectedMedia ? 1024 : 4096}
                   />
                   <button
                     type="submit"
@@ -1342,7 +2641,7 @@ export function DialogsPage() {
                     disabled={
                       sending ||
                       loadingMessages ||
-                      (!draftText.trim() && !selectedImage)
+                      (!draftText.trim() && !selectedMedia)
                     }
                     title="Gửi"
                   >
@@ -1362,8 +2661,8 @@ export function DialogsPage() {
                   </button>
                 </div>
                 <p className="message-compose-meta muted">
-                  {selectedImage
-                    ? `${draftText.length}/1024 · ảnh đã chọn`
+                  {selectedMedia
+                    ? `${draftText.length}/1024 · ${selectedMediaKind ? chatMediaKindLabel(selectedMediaKind).toLowerCase() : 'file'} đã chọn`
                     : `${draftText.length}/4096`}
                 </p>
               </form>
@@ -1371,6 +2670,65 @@ export function DialogsPage() {
           </div>
         </section>
       )}
+
+      <MediaGalleryModal
+        open={showGallery && Boolean(selected && phone)}
+        phone={phone}
+        peerId={selected?.id ?? ''}
+        messages={messages}
+        loadedPhotoIds={loadedPhotoIds}
+        onClose={() => setShowGallery(false)}
+        onRevealPhoto={revealPhoto}
+      />
+
+      <ForwardMessageModal
+        open={Boolean(forwardMessage) || forwardMessages.length > 0}
+        message={forwardMessage}
+        messages={forwardMessages}
+        dialogs={dialogs}
+        currentDialogId={selected?.id ?? null}
+        loading={forwarding}
+        onClose={() => {
+          setForwardMessage(null)
+          setForwardMessages([])
+        }}
+        onSend={(targets) => void handleForwardSend(targets)}
+        onEnterSelectMode={() => {
+          setForwardMessage(null)
+          setForwardMessages([])
+          enterSelectMode()
+        }}
+      />
+
+      <JumpToMessageModal
+        open={showJumpModal}
+        loading={jumpingMessages}
+        onClose={() => setShowJumpModal(false)}
+        onJumpToId={(messageId) => void handleJumpToMessageId(messageId)}
+        onJumpToDate={(date) => void handleJumpToDate(date)}
+      />
+
+      {messageMenu ? (
+        <MessageContextMenu
+          menu={messageMenu}
+          canPin={canPinMessages}
+          forwarding={forwarding}
+          pinningId={pinningId}
+          deletingId={deletingId}
+          sending={sending}
+          onCopy={(msg) => void handleCopyMessage(msg)}
+          onReply={handleReplyToMessage}
+          onEdit={(msg) => {
+            if (canEditMessage(msg)) startEditMessage(msg)
+          }}
+          onForward={setForwardMessage}
+          onSelect={(msg) => enterSelectMode(msg.id)}
+          onPin={(msg) => void handlePinMessage(msg, Boolean(msg.pinned))}
+          onDelete={(msg) => void handleDeleteMessage(msg)}
+          onClose={() => setMessageMenu(null)}
+        />
+      ) : null}
+
     </div>
   )
 }

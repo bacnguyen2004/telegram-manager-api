@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { DialogItem } from '../types/api'
 import {
+  getUnreadMessagesInLoaded,
   inferHasMoreOlder,
   isStaleMessagesRequest,
   mergeDialogsWithStoredReadState,
+  mergeNewMessages,
+  messageCopyText,
+  planPartialMarkRead,
+  resolveReplyQuote,
 } from './dialogMessages'
 
 const baseDialog: DialogItem = {
@@ -25,6 +30,41 @@ const baseDialog: DialogItem = {
   last_message_id: 120,
   last_message: 'hello',
 }
+
+describe('messageCopyText', () => {
+  it('returns plain text when available', () => {
+    expect(
+      messageCopyText({
+        text: 'Hello world',
+        has_photo: false,
+        has_media: false,
+        content_type: 'text',
+      }),
+    ).toBe('Hello world')
+  })
+
+  it('returns empty for photo without caption', () => {
+    expect(
+      messageCopyText({
+        text: '[photo]',
+        has_photo: true,
+        has_media: true,
+        content_type: 'photo',
+      }),
+    ).toBe('')
+  })
+
+  it('returns media label for non-text media', () => {
+    expect(
+      messageCopyText({
+        text: '',
+        has_photo: false,
+        has_media: true,
+        content_type: 'video',
+      }),
+    ).toBe('Video')
+  })
+})
 
 describe('inferHasMoreOlder', () => {
   it('uses API flag when provided', () => {
@@ -49,6 +89,92 @@ describe('isStaleMessagesRequest', () => {
 
   it('accepts current request', () => {
     expect(isStaleMessagesRequest(2, 'a', 2, 'a')).toBe(false)
+  })
+})
+
+describe('getUnreadMessagesInLoaded', () => {
+  const messages = [{ id: 101 }, { id: 150 }, { id: 200 }]
+
+  it('returns messages newer than read pointer', () => {
+    expect(getUnreadMessagesInLoaded(messages, 120)).toEqual([{ id: 150 }, { id: 200 }])
+  })
+})
+
+describe('planPartialMarkRead', () => {
+    const messages = Array.from({ length: 30 }, (_, index) => ({ id: 1401 + index }))
+
+  it('keeps unread outside loaded batch when more unread exist on server', () => {
+    const plan = planPartialMarkRead(messages, 1000, 500)
+
+    expect(plan).toEqual({
+      maxId: 1430,
+      markedInBatch: 30,
+      remainingUnread: 470,
+      syncToServer: false,
+    })
+  })
+
+  it('syncs to server when all unread fit in loaded batch', () => {
+    const batch = Array.from({ length: 30 }, (_, index) => ({ id: 1481 + index }))
+    const plan = planPartialMarkRead(batch, 1480, 20)
+
+    expect(plan).toEqual({
+      maxId: 1510,
+      markedInBatch: 30,
+      remainingUnread: 0,
+      syncToServer: true,
+    })
+  })
+})
+
+describe('mergeNewMessages', () => {
+  it('appends only new ids and keeps sort order', () => {
+    const prev = [
+      { id: 1, text: 'a' },
+      { id: 2, text: 'b' },
+    ] as const
+    const incoming = [
+      { id: 2, text: 'dup' },
+      { id: 3, text: 'c' },
+    ] as const
+    const merged = mergeNewMessages([...prev], [...incoming])
+    expect(merged.map((msg) => msg.id)).toEqual([1, 2, 3])
+    expect(merged[1].text).toBe('b')
+  })
+})
+
+describe('resolveReplyQuote', () => {
+  const messages = [
+    {
+      id: 10,
+      text: 'parent text',
+      outgoing: false,
+      sender_name: 'Alice',
+      has_photo: false,
+      has_media: false,
+      content_type: 'text',
+    },
+  ] as const
+
+  it('returns null when no reply id', () => {
+    expect(resolveReplyQuote({ reply_to_msg_id: null }, [])).toBeNull()
+  })
+
+  it('uses API quote text when present', () => {
+    const quote = resolveReplyQuote(
+      {
+        reply_to_msg_id: 10,
+        reply_to_text: 'quoted',
+        reply_to_sender_name: 'Bob',
+      },
+      [],
+    )
+    expect(quote).toEqual({ id: 10, text: 'quoted', senderName: 'Bob' })
+  })
+
+  it('falls back to loaded parent message', () => {
+    const quote = resolveReplyQuote({ reply_to_msg_id: 10 }, [...messages])
+    expect(quote).toEqual({ id: 10, text: 'parent text', senderName: 'Alice' })
   })
 })
 

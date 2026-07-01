@@ -49,6 +49,136 @@ class TelegramMessageService:
     async def send_message(self, phone: str, peer_id: str, text: str) -> dict:
         return await self._send(phone, peer_id, text)
 
+    async def edit_message(
+        self,
+        phone: str,
+        peer_id: str,
+        message_id: int,
+        text: str,
+    ) -> dict:
+        phone = phone.strip()
+        peer_ref = str(peer_id or "").strip()
+        text = (text or "").strip()
+
+        if not phone:
+            return self._error(phone, peer_ref, "Thieu phone", message_id=message_id)
+        if not peer_ref:
+            return self._error(phone, peer_ref, "Thieu peer_id", message_id=message_id)
+        if message_id < 1:
+            return self._error(phone, peer_ref, "message_id khong hop le", message_id=message_id)
+        if not text:
+            return self._error(phone, peer_ref, "Thieu noi dung tin nhan", message_id=message_id)
+        if len(text) > 4096:
+            return self._error(phone, peer_ref, "Noi dung qua dai", message_id=message_id)
+
+        try:
+            settings.validate_telegram_config()
+        except ValueError as exc:
+            return self._error(phone, peer_ref, str(exc), message_id=message_id)
+
+        session_file = self._session_file(phone)
+        if not session_file.exists():
+            return self._error(
+                phone,
+                peer_ref,
+                f"Khong tim thay file session: {session_file}",
+                message_id=message_id,
+            )
+
+        try:
+            async with telethon_session(
+                phone, self.api_id, self.api_hash, self.session_dir
+            ) as client:
+                if not await client.is_user_authorized():
+                    return self._error(
+                        phone,
+                        peer_ref,
+                        "Session chua dang nhap hoac da het han",
+                        message_id=message_id,
+                    )
+
+                entity = await self._resolve_peer(client, peer_ref)
+                edited = await client.edit_message(entity, message_id, text)
+                edited_id = getattr(edited, "id", message_id)
+
+                return {
+                    "status": "success",
+                    "phone": phone,
+                    "peer_id": peer_ref,
+                    "message_id": edited_id,
+                    "reply_to_msg_id": None,
+                    "message": "Da sua tin nhan",
+                }
+        except FloodWaitError as exc:
+            return self._error(phone, peer_ref, f"Flood wait {exc.seconds}s", message_id=message_id)
+        except Exception as exc:
+            return self._error(phone, peer_ref, str(exc), message_id=message_id)
+
+    async def delete_messages(
+        self,
+        phone: str,
+        peer_id: str,
+        message_ids: list[int],
+    ) -> dict:
+        phone = phone.strip()
+        peer_ref = str(peer_id or "").strip()
+        ids = sorted({int(item) for item in message_ids if int(item) > 0})
+
+        if not phone:
+            return self._bulk_delete_error(phone, peer_ref, "Thieu phone", ids)
+        if not peer_ref:
+            return self._bulk_delete_error(phone, peer_ref, "Thieu peer_id", ids)
+        if not ids:
+            return self._bulk_delete_error(phone, peer_ref, "Thieu message_ids", ids)
+        if len(ids) > 50:
+            return self._bulk_delete_error(phone, peer_ref, "Toi da 50 tin moi lan", ids)
+
+        try:
+            settings.validate_telegram_config()
+        except ValueError as exc:
+            return self._bulk_delete_error(phone, peer_ref, str(exc), ids)
+
+        session_file = self._session_file(phone)
+        if not session_file.exists():
+            return self._bulk_delete_error(
+                phone,
+                peer_ref,
+                f"Khong tim thay file session: {session_file}",
+                ids,
+            )
+
+        try:
+            async with telethon_session(
+                phone, self.api_id, self.api_hash, self.session_dir
+            ) as client:
+                if not await client.is_user_authorized():
+                    return self._bulk_delete_error(
+                        phone,
+                        peer_ref,
+                        "Session chua dang nhap hoac da het han",
+                        ids,
+                    )
+
+                entity = await self._resolve_peer(client, peer_ref)
+                await client.delete_messages(entity, ids)
+
+                return {
+                    "status": "success",
+                    "phone": phone,
+                    "peer_id": peer_ref,
+                    "message_id": ids[-1],
+                    "reply_to_msg_id": None,
+                    "deleted_count": len(ids),
+                    "message_ids": ids,
+                    "message": f"Da xoa {len(ids)} tin nhan",
+                }
+        except FloodWaitError as exc:
+            return self._bulk_delete_error(
+                phone, peer_ref, f"Flood wait {exc.seconds}s", ids
+            )
+        except Exception as exc:
+            return self._bulk_delete_error(phone, peer_ref, str(exc), ids)
+
     async def delete_message(
         self,
         phone: str,
@@ -315,10 +445,29 @@ class TelegramMessageService:
                         phone, peer_ref, error_message, message_id=message_id
                     )
 
-                kind, source, options, poll_message_id, _poll_message = poll_data
+                kind, source, options, poll_message_id, poll_message = poll_data
                 _, url_option_bytes = self._split_message_link(message_link or "")
                 suggested = self._suggest_option_index(kind, options, url_option_bytes)
                 poll_settings = self._votable_settings(kind, source)
+                me = await client.get_me()
+                vote_meta = self._poll_vote_meta(kind, poll_message, me.id)
+                serialized_options = [
+                    self._serialize_poll_option(
+                        kind,
+                        item,
+                        index,
+                        chosen=vote_meta["option_stats"].get(
+                            self._poll_option_stats_key(kind, item, index),
+                            {},
+                        ).get("chosen", False),
+                        voters=vote_meta["option_stats"].get(
+                            self._poll_option_stats_key(kind, item, index),
+                            {},
+                        ).get("voters"),
+                    )
+                    for index, item in enumerate(options)
+                ]
+                user_voted = any(option["chosen"] for option in serialized_options)
                 return {
                     "status": "success",
                     "phone": phone,
@@ -326,11 +475,11 @@ class TelegramMessageService:
                     "message_id": poll_message_id,
                     "question": self._votable_question_label(kind, source),
                     **poll_settings,
-                    "options": [
-                        self._serialize_poll_option(kind, item, index)
-                        for index, item in enumerate(options)
-                    ],
+                    "options": serialized_options,
                     "suggested_option_index": suggested,
+                    "user_voted": user_voted,
+                    "total_voters": vote_meta["total_voters"],
+                    "can_view_stats": vote_meta["can_view_stats"],
                     "message": "OK",
                 }
         except FloodWaitError as exc:
@@ -991,6 +1140,7 @@ class TelegramMessageService:
         *,
         caption: str | None = None,
         reply_to_msg_id: int | None = None,
+        media_kind: str = "image",
     ) -> dict:
         phone = phone.strip()
         peer_ref = str(peer_id or "").strip()
@@ -1035,26 +1185,285 @@ class TelegramMessageService:
                 entity = await self._resolve_peer(client, peer_ref)
                 buffer = io.BytesIO(file_bytes)
                 buffer.name = filename
-                sent = await client.send_file(
-                    entity,
-                    buffer,
-                    caption=caption or None,
-                    reply_to=reply_to_msg_id,
-                    force_document=False,
-                )
+                send_kwargs: dict = {
+                    "caption": caption or None,
+                    "reply_to": reply_to_msg_id,
+                }
+                if media_kind == "document":
+                    send_kwargs["force_document"] = True
+                elif media_kind == "video":
+                    send_kwargs["supports_streaming"] = True
+                else:
+                    send_kwargs["force_document"] = False
 
+                sent = await client.send_file(entity, buffer, **send_kwargs)
+
+                success_labels = {
+                    "image": "Da gui anh",
+                    "video": "Da gui video",
+                    "document": "Da gui file",
+                }
                 return {
                     "status": "success",
                     "phone": phone,
                     "peer_id": peer_ref,
                     "message_id": getattr(sent, "id", None),
                     "reply_to_msg_id": reply_to_msg_id,
-                    "message": "Da gui anh",
+                    "message": success_labels.get(media_kind, "Da gui media"),
                 }
         except FloodWaitError as exc:
             return self._error(phone, peer_ref, f"Flood wait {exc.seconds}s")
         except Exception as exc:
             return self._error(phone, peer_ref, str(exc))
+
+    async def forward_messages(
+        self,
+        phone: str,
+        from_peer_id: str,
+        to_peer_id: str,
+        message_ids: list[int],
+    ) -> dict:
+        phone = phone.strip()
+        from_ref = str(from_peer_id or "").strip()
+        to_ref = str(to_peer_id or "").strip()
+        ids = sorted({int(item) for item in message_ids if int(item) > 0})
+
+        if not phone:
+            return self._bulk_forward_error(phone, from_ref, to_ref, "Thieu phone", ids)
+        if not from_ref:
+            return self._bulk_forward_error(phone, from_ref, to_ref, "Thieu from_peer_id", ids)
+        if not to_ref:
+            return self._bulk_forward_error(phone, from_ref, to_ref, "Thieu to_peer_id", ids)
+        if not ids:
+            return self._bulk_forward_error(phone, from_ref, to_ref, "Thieu message_ids", ids)
+        if len(ids) > 50:
+            return self._bulk_forward_error(phone, from_ref, to_ref, "Toi da 50 tin moi lan", ids)
+
+        try:
+            settings.validate_telegram_config()
+        except ValueError as exc:
+            return self._bulk_forward_error(phone, from_ref, to_ref, str(exc), ids)
+
+        session_file = self._session_file(phone)
+        if not session_file.exists():
+            return self._bulk_forward_error(
+                phone,
+                from_ref,
+                to_ref,
+                f"Khong tim thay file session: {session_file}",
+                ids,
+            )
+
+        try:
+            async with telethon_session(
+                phone, self.api_id, self.api_hash, self.session_dir
+            ) as client:
+                if not await client.is_user_authorized():
+                    return self._bulk_forward_error(
+                        phone,
+                        from_ref,
+                        to_ref,
+                        "Session chua dang nhap hoac da het han",
+                        ids,
+                    )
+
+                from_entity = await self._resolve_peer(client, from_ref)
+                to_entity = await self._resolve_peer(client, to_ref)
+                source_messages = await client.get_messages(from_entity, ids=ids)
+                if not isinstance(source_messages, list):
+                    source_messages = [source_messages]
+                source_messages = [
+                    item for item in source_messages if item and getattr(item, "id", None)
+                ]
+                if not source_messages:
+                    return self._bulk_forward_error(
+                        phone,
+                        from_ref,
+                        to_ref,
+                        "Khong tim thay tin nhan",
+                        ids,
+                    )
+
+                forwarded = await client.forward_messages(
+                    to_entity,
+                    source_messages,
+                    from_peer=from_entity,
+                )
+                forwarded_ids = [
+                    int(getattr(item, "id", 0) or 0)
+                    for item in (forwarded if isinstance(forwarded, list) else [forwarded])
+                    if getattr(item, "id", None)
+                ]
+
+                return {
+                    "status": "success",
+                    "phone": phone,
+                    "peer_id": to_ref,
+                    "from_peer_id": from_ref,
+                    "to_peer_id": to_ref,
+                    "message_id": forwarded_ids[-1] if forwarded_ids else None,
+                    "reply_to_msg_id": None,
+                    "forwarded_count": len(forwarded_ids),
+                    "message_ids": forwarded_ids,
+                    "message": f"Da forward {len(forwarded_ids)} tin nhan",
+                }
+        except FloodWaitError as exc:
+            return self._bulk_forward_error(
+                phone, from_ref, to_ref, f"Flood wait {exc.seconds}s", ids
+            )
+        except Exception as exc:
+            return self._bulk_forward_error(phone, from_ref, to_ref, str(exc), ids)
+
+    async def forward_message(
+        self,
+        phone: str,
+        from_peer_id: str,
+        to_peer_id: str,
+        message_id: int,
+    ) -> dict:
+        phone = phone.strip()
+        from_ref = str(from_peer_id or "").strip()
+        to_ref = str(to_peer_id or "").strip()
+
+        if not phone:
+            return self._forward_error(phone, from_ref, to_ref, "Thieu phone", message_id)
+        if not from_ref:
+            return self._forward_error(phone, from_ref, to_ref, "Thieu from_peer_id", message_id)
+        if not to_ref:
+            return self._forward_error(phone, from_ref, to_ref, "Thieu to_peer_id", message_id)
+        if message_id < 1:
+            return self._forward_error(
+                phone, from_ref, to_ref, "message_id khong hop le", message_id
+            )
+
+        try:
+            settings.validate_telegram_config()
+        except ValueError as exc:
+            return self._forward_error(phone, from_ref, to_ref, str(exc), message_id)
+
+        session_file = self._session_file(phone)
+        if not session_file.exists():
+            return self._forward_error(
+                phone,
+                from_ref,
+                to_ref,
+                f"Khong tim thay file session: {session_file}",
+                message_id,
+            )
+
+        try:
+            async with telethon_session(
+                phone, self.api_id, self.api_hash, self.session_dir
+            ) as client:
+                if not await client.is_user_authorized():
+                    return self._forward_error(
+                        phone,
+                        from_ref,
+                        to_ref,
+                        "Session chua dang nhap hoac da het han",
+                        message_id,
+                    )
+
+                from_entity = await self._resolve_peer(client, from_ref)
+                to_entity = await self._resolve_peer(client, to_ref)
+                message = await client.get_messages(from_entity, ids=message_id)
+                if not message:
+                    return self._forward_error(
+                        phone,
+                        from_ref,
+                        to_ref,
+                        "Khong tim thay tin nhan",
+                        message_id,
+                    )
+
+                forwarded = await client.forward_messages(
+                    to_entity,
+                    message,
+                    from_peer=from_entity,
+                )
+                forwarded_id = getattr(forwarded[0], "id", None) if forwarded else None
+
+                return {
+                    "status": "success",
+                    "phone": phone,
+                    "peer_id": to_ref,
+                    "from_peer_id": from_ref,
+                    "to_peer_id": to_ref,
+                    "message_id": forwarded_id,
+                    "reply_to_msg_id": None,
+                    "message": "Da forward tin nhan",
+                }
+        except FloodWaitError as exc:
+            return self._forward_error(
+                phone, from_ref, to_ref, f"Flood wait {exc.seconds}s", message_id
+            )
+        except Exception as exc:
+            return self._forward_error(phone, from_ref, to_ref, str(exc), message_id)
+
+    async def pin_message(
+        self,
+        phone: str,
+        peer_id: str,
+        message_id: int,
+        *,
+        unpin: bool = False,
+    ) -> dict:
+        phone = phone.strip()
+        peer_ref = str(peer_id or "").strip()
+
+        if not phone:
+            return self._pin_error(phone, peer_ref, "Thieu phone", message_id)
+        if not peer_ref:
+            return self._pin_error(phone, peer_ref, "Thieu peer_id", message_id)
+        if message_id < 1:
+            return self._pin_error(phone, peer_ref, "message_id khong hop le", message_id)
+
+        try:
+            settings.validate_telegram_config()
+        except ValueError as exc:
+            return self._pin_error(phone, peer_ref, str(exc), message_id)
+
+        session_file = self._session_file(phone)
+        if not session_file.exists():
+            return self._pin_error(
+                phone,
+                peer_ref,
+                f"Khong tim thay file session: {session_file}",
+                message_id,
+            )
+
+        try:
+            async with telethon_session(
+                phone, self.api_id, self.api_hash, self.session_dir
+            ) as client:
+                if not await client.is_user_authorized():
+                    return self._pin_error(
+                        phone,
+                        peer_ref,
+                        "Session chua dang nhap hoac da het han",
+                        message_id,
+                    )
+
+                entity = await self._resolve_peer(client, peer_ref)
+                message = await client.get_messages(entity, ids=message_id)
+                if not message:
+                    return self._pin_error(phone, peer_ref, "Khong tim thay tin nhan", message_id)
+
+                await client.pin_message(entity, message, notify=False, unpin=unpin)
+
+                return {
+                    "status": "success",
+                    "phone": phone,
+                    "peer_id": peer_ref,
+                    "message_id": message_id,
+                    "reply_to_msg_id": None,
+                    "pinned": not unpin,
+                    "message": "Da bo ghim" if unpin else "Da ghim tin nhan",
+                }
+        except FloodWaitError as exc:
+            return self._pin_error(phone, peer_ref, f"Flood wait {exc.seconds}s", message_id)
+        except Exception as exc:
+            return self._pin_error(phone, peer_ref, str(exc), message_id)
 
     async def _send(
         self,
@@ -1363,7 +1772,15 @@ class TelegramMessageService:
         }
 
     @classmethod
-    def _serialize_poll_option(cls, kind: str, item, index: int) -> dict:
+    def _serialize_poll_option(
+        cls,
+        kind: str,
+        item,
+        index: int,
+        *,
+        chosen: bool = False,
+        voters: int | None = None,
+    ) -> dict:
         label = cls._option_label(kind, item) or str(index + 1)
         if kind == "poll":
             option_bytes = getattr(item, "option", b"") or b""
@@ -1372,12 +1789,78 @@ class TelegramMessageService:
                 "label": label,
                 "option_hex": option_bytes.hex(),
                 "todo_item_id": None,
+                "chosen": chosen,
+                "voters": voters,
             }
         return {
             "index": index + 1,
             "label": label,
             "option_hex": "",
             "todo_item_id": getattr(item, "id", None),
+            "chosen": chosen,
+            "voters": voters,
+        }
+
+    @staticmethod
+    def _peer_user_id(peer) -> int | None:
+        if peer is None:
+            return None
+        user_id = getattr(peer, "user_id", None)
+        if user_id is not None:
+            return int(user_id)
+        return None
+
+    @classmethod
+    def _poll_option_stats_key(cls, kind: str, item, index: int) -> str:
+        if kind == "poll":
+            option_bytes = getattr(item, "option", b"") or b""
+            return option_bytes.hex()
+        todo_item_id = getattr(item, "id", None)
+        if todo_item_id is not None:
+            return f"todo:{todo_item_id}"
+        return f"todo-index:{index + 1}"
+
+    @classmethod
+    def _poll_vote_meta(cls, kind: str, poll_message, me_id: int) -> dict:
+        option_stats: dict[str, dict] = {}
+        total_voters: int | None = None
+        can_view_stats = False
+
+        if not poll_message:
+            return {
+                "option_stats": option_stats,
+                "total_voters": total_voters,
+                "can_view_stats": can_view_stats,
+            }
+
+        media = getattr(poll_message, "media", None)
+        if kind == "poll" and isinstance(media, MessageMediaPoll):
+            results = getattr(media, "results", None)
+            if results is not None:
+                total_voters = getattr(results, "total_voters", None)
+                can_view_stats = bool(getattr(results, "can_view_stats", False))
+                for item in getattr(results, "results", None) or []:
+                    option_bytes = getattr(item, "option", b"") or b""
+                    option_stats[option_bytes.hex()] = {
+                        "chosen": bool(getattr(item, "chosen", False)),
+                        "voters": getattr(item, "voters", None),
+                    }
+        elif kind == "todo" and isinstance(media, MessageMediaToDo):
+            for completion in getattr(media, "completions", None) or []:
+                if cls._peer_user_id(getattr(completion, "completed_by", None)) != me_id:
+                    continue
+                todo_item_id = getattr(completion, "id", None)
+                if todo_item_id is None:
+                    continue
+                option_stats[f"todo:{todo_item_id}"] = {
+                    "chosen": True,
+                    "voters": None,
+                }
+
+        return {
+            "option_stats": option_stats,
+            "total_voters": total_voters,
+            "can_view_stats": can_view_stats,
         }
 
     @staticmethod
@@ -1905,6 +2388,81 @@ class TelegramMessageService:
             "peer_id": peer_id,
             "message_id": message_id,
             "reply_to_msg_id": None,
+            "message": message,
+        }
+
+    @staticmethod
+    @staticmethod
+    def _bulk_forward_error(
+        phone: str,
+        from_peer_id: str,
+        to_peer_id: str,
+        message: str,
+        message_ids: list[int],
+    ) -> dict:
+        return {
+            "status": "error",
+            "phone": phone,
+            "peer_id": to_peer_id,
+            "from_peer_id": from_peer_id,
+            "to_peer_id": to_peer_id,
+            "message_id": message_ids[-1] if message_ids else None,
+            "reply_to_msg_id": None,
+            "forwarded_count": 0,
+            "message_ids": [],
+            "message": message,
+        }
+
+    @staticmethod
+    def _bulk_delete_error(
+        phone: str,
+        peer_id: str,
+        message: str,
+        message_ids: list[int],
+    ) -> dict:
+        return {
+            "status": "error",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": message_ids[-1] if message_ids else None,
+            "reply_to_msg_id": None,
+            "deleted_count": 0,
+            "message_ids": [],
+            "message": message,
+        }
+
+    def _forward_error(
+        phone: str,
+        from_peer_id: str,
+        to_peer_id: str,
+        message: str,
+        message_id: int | None = None,
+    ) -> dict:
+        return {
+            "status": "error",
+            "phone": phone,
+            "peer_id": to_peer_id,
+            "from_peer_id": from_peer_id,
+            "to_peer_id": to_peer_id,
+            "message_id": message_id,
+            "reply_to_msg_id": None,
+            "message": message,
+        }
+
+    @staticmethod
+    def _pin_error(
+        phone: str,
+        peer_id: str,
+        message: str,
+        message_id: int | None = None,
+    ) -> dict:
+        return {
+            "status": "error",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": message_id,
+            "reply_to_msg_id": None,
+            "pinned": False,
             "message": message,
         }
 

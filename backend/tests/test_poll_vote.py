@@ -1,6 +1,14 @@
 from types import SimpleNamespace
 
-from telethon.tl.types import MessageMediaPoll, MessageMediaToDo, MessageMediaWebPage
+from telethon.tl.types import (
+    MessageMediaPoll,
+    MessageMediaToDo,
+    MessageMediaWebPage,
+    PeerUser,
+    PollAnswerVoters,
+    PollResults,
+    TodoCompletion,
+)
 
 from app.routers import messages
 from app.services.telegram.messages import TelegramMessageService
@@ -94,6 +102,53 @@ def test_serialize_poll_option_includes_hex():
     item = TelegramMessageService._serialize_poll_option("poll", answers[0], 0)
     assert item["option_hex"] == "32"
     assert item["todo_item_id"] is None
+
+
+def test_poll_vote_meta_marks_chosen_poll_options():
+    poll = SimpleNamespace(
+        question=SimpleNamespace(text="Pick"),
+        answers=[_answer("Co", b"a"), _answer("Khong", b"b")],
+    )
+    results = PollResults(
+        total_voters=5,
+        can_view_stats=True,
+        results=[
+            PollAnswerVoters(option=b"a", chosen=True, voters=3),
+            PollAnswerVoters(option=b"b", chosen=False, voters=2),
+        ],
+    )
+    message = SimpleNamespace(
+        id=42,
+        media=MessageMediaPoll(poll=poll, results=results),
+        poll=None,
+    )
+    meta = TelegramMessageService._poll_vote_meta("poll", message, 1001)
+    assert meta["total_voters"] == 5
+    assert meta["can_view_stats"] is True
+    assert meta["option_stats"]["61"]["chosen"] is True
+    assert meta["option_stats"]["61"]["voters"] == 3
+
+
+def test_poll_vote_meta_marks_todo_completions_for_me():
+    todo = SimpleNamespace(
+        title=SimpleNamespace(text="Tasks"),
+        list=[
+            SimpleNamespace(id=10, title=SimpleNamespace(text="A")),
+            SimpleNamespace(id=11, title=SimpleNamespace(text="B")),
+        ],
+    )
+    completions = [
+        TodoCompletion(id=10, completed_by=PeerUser(user_id=7), date=None),
+        TodoCompletion(id=11, completed_by=PeerUser(user_id=99), date=None),
+    ]
+    message = SimpleNamespace(
+        id=55,
+        media=MessageMediaToDo(todo=todo, completions=completions),
+        poll=None,
+    )
+    meta = TelegramMessageService._poll_vote_meta("todo", message, 7)
+    assert meta["option_stats"]["todo:10"]["chosen"] is True
+    assert "todo:11" not in meta["option_stats"]
 
 
 def test_votable_settings_maps_poll_flags():

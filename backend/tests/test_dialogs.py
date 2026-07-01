@@ -75,8 +75,11 @@ async def test_get_messages_with_offset_id(client, monkeypatch):
         peer_id: str,
         limit: int = 40,
         offset_id: int = 0,
+        around_id: int = 0,
+        offset_date: str = "",
     ):
         captured["offset_id"] = offset_id
+        captured["around_id"] = around_id
         return {
             "status": "success",
             "phone": phone,
@@ -123,6 +126,8 @@ async def test_get_messages_without_offset_id(client, monkeypatch):
         peer_id: str,
         limit: int = 40,
         offset_id: int = 0,
+        around_id: int = 0,
+        offset_date: str = "",
     ):
         captured["offset_id"] = offset_id
         captured["limit"] = limit
@@ -158,6 +163,8 @@ async def test_get_messages_has_more_older(client, monkeypatch):
         peer_id: str,
         limit: int = 40,
         offset_id: int = 0,
+        around_id: int = 0,
+        offset_date: str = "",
     ):
         return {
             "status": "success",
@@ -197,6 +204,102 @@ async def test_get_messages_has_more_older(client, monkeypatch):
     assert body["success"] is True
     assert body["data"]["has_more_older"] is True
     assert body["data"]["total"] == 50
+
+
+async def test_get_pinned_messages_success(client, monkeypatch):
+    async def mock_get_pinned_messages(phone: str, peer_id: str, limit: int = 10):
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "total": 1,
+            "messages": [
+                {
+                    "id": 101,
+                    "date": "01/07/2026 12:00:00",
+                    "sender_id": "1",
+                    "sender_name": "Admin",
+                    "outgoing": False,
+                    "content_type": "text",
+                    "has_media": False,
+                    "has_photo": False,
+                    "text": "Tin ghim",
+                    "reactions": [],
+                }
+            ],
+            "message": "OK",
+        }
+
+    monkeypatch.setattr(
+        dialogs.telegram_dialog_service,
+        "get_pinned_messages",
+        mock_get_pinned_messages,
+    )
+
+    response = client.get(
+        "/api/dialogs/%2B84901234567/pinned",
+        params={"peer_id": "123456789", "limit": 5},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["total"] == 1
+    assert body["data"]["messages"][0]["id"] == 101
+
+
+async def test_search_dialog_messages_success(client, monkeypatch):
+    captured: dict = {}
+
+    async def mock_search_messages(
+        phone: str,
+        peer_id: str,
+        query: str,
+        limit: int = 50,
+    ):
+        captured["query"] = query
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "title": "",
+            "total": 1,
+            "messages": [
+                {
+                    "id": 77,
+                    "date": "01/07/2026 12:00:00",
+                    "sender_id": "1",
+                    "sender_name": "A",
+                    "outgoing": False,
+                    "content_type": "text",
+                    "has_media": False,
+                    "has_photo": False,
+                    "text": "hello world",
+                    "edited": False,
+                    "edited_date": "",
+                    "reactions": [],
+                }
+            ],
+            "has_more_older": False,
+            "message": "OK",
+        }
+
+    monkeypatch.setattr(
+        dialogs.telegram_dialog_service,
+        "search_messages",
+        mock_search_messages,
+    )
+
+    response = client.get(
+        "/api/dialogs/%2B84901234567/messages/search",
+        params={"peer_id": "123456789", "q": "hello"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert captured["query"] == "hello"
+    assert body["data"]["messages"][0]["id"] == 77
 
 
 async def test_mark_dialog_read_error(client, monkeypatch):

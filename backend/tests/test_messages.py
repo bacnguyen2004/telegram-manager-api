@@ -178,7 +178,32 @@ async def test_send_media_success(client, monkeypatch):
     assert data["reply_to_msg_id"] == 12
 
 
-def test_send_media_rejects_non_image(client):
+async def test_send_media_accepts_pdf(client, monkeypatch):
+    async def mock_send_media(
+        phone: str,
+        peer_id: str,
+        file_bytes: bytes,
+        filename: str,
+        *,
+        caption: str | None = None,
+        reply_to_msg_id: int | None = None,
+        media_kind: str = "image",
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": 88,
+            "reply_to_msg_id": reply_to_msg_id,
+            "message": "Da gui file",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "send_media",
+        mock_send_media,
+    )
+
     response = client.post(
         "/api/messages/send-media",
         data={
@@ -190,8 +215,103 @@ def test_send_media_rejects_non_image(client):
 
     assert response.status_code == 200
     data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["message_id"] == 88
+
+
+def test_send_media_rejects_unknown_type(client):
+    response = client.post(
+        "/api/messages/send-media",
+        data={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+        },
+        files={"file": ("data.bin", b"abc", "application/octet-stream")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
     assert data["status"] == "error"
-    assert "JPEG" in data["message"]
+    assert "PDF" in data["message"]
+
+
+async def test_forward_message_success(client, monkeypatch):
+    async def mock_forward_message(
+        phone: str,
+        from_peer_id: str,
+        to_peer_id: str,
+        message_id: int,
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": to_peer_id,
+            "from_peer_id": from_peer_id,
+            "to_peer_id": to_peer_id,
+            "message_id": 99,
+            "reply_to_msg_id": None,
+            "message": "Da forward tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "forward_message",
+        mock_forward_message,
+    )
+
+    response = client.post(
+        "/api/messages/forward",
+        json={
+            "phone": "+84901234567",
+            "from_peer_id": "111",
+            "to_peer_id": "222",
+            "message_id": 42,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["message_id"] == 99
+
+
+async def test_pin_message_success(client, monkeypatch):
+    async def mock_pin_message(
+        phone: str,
+        peer_id: str,
+        message_id: int,
+        *,
+        unpin: bool = False,
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": message_id,
+            "reply_to_msg_id": None,
+            "pinned": not unpin,
+            "message": "Da ghim tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "pin_message",
+        mock_pin_message,
+    )
+
+    response = client.post(
+        "/api/messages/pin",
+        json={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+            "message_id": 42,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["pinned"] is True
 
 
 async def test_send_reaction_success(client, monkeypatch):
@@ -293,6 +413,124 @@ async def test_remove_reaction_success(client, monkeypatch):
     data = response.json()["data"]
     assert data["status"] == "success"
     assert data["emoji"] is None
+
+
+async def test_edit_message_success(client, monkeypatch):
+    async def mock_edit_message(
+        phone: str,
+        peer_id: str,
+        message_id: int,
+        text: str,
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": message_id,
+            "reply_to_msg_id": None,
+            "message": "Da sua tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "edit_message",
+        mock_edit_message,
+    )
+
+    response = client.post(
+        "/api/messages/edit",
+        json={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+            "message_id": 42,
+            "text": "Da sua",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["message_id"] == 42
+
+
+async def test_forward_messages_bulk_success(client, monkeypatch):
+    async def mock_forward_messages(
+        phone: str,
+        from_peer_id: str,
+        to_peer_id: str,
+        message_ids: list[int],
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": to_peer_id,
+            "from_peer_id": from_peer_id,
+            "to_peer_id": to_peer_id,
+            "message_id": 99,
+            "reply_to_msg_id": None,
+            "forwarded_count": len(message_ids),
+            "message_ids": [99, 100],
+            "message": "Da forward 2 tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "forward_messages",
+        mock_forward_messages,
+    )
+
+    response = client.post(
+        "/api/messages/forward-bulk",
+        json={
+            "phone": "+84901234567",
+            "from_peer_id": "123456789",
+            "to_peer_id": "987654321",
+            "message_ids": [10, 11],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["forwarded_count"] == 2
+
+
+async def test_delete_messages_bulk_success(client, monkeypatch):
+    async def mock_delete_messages(
+        phone: str,
+        peer_id: str,
+        message_ids: list[int],
+    ) -> dict:
+        return {
+            "status": "success",
+            "phone": phone,
+            "peer_id": peer_id,
+            "message_id": message_ids[-1],
+            "reply_to_msg_id": None,
+            "deleted_count": len(message_ids),
+            "message_ids": message_ids,
+            "message": "Da xoa 2 tin nhan",
+        }
+
+    monkeypatch.setattr(
+        messages.telegram_message_service,
+        "delete_messages",
+        mock_delete_messages,
+    )
+
+    response = client.post(
+        "/api/messages/delete-bulk",
+        json={
+            "phone": "+84901234567",
+            "peer_id": "123456789",
+            "message_ids": [10, 11],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "success"
+    assert data["deleted_count"] == 2
 
 
 def test_send_message_validation_empty_text(client):

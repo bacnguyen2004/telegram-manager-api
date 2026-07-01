@@ -29,13 +29,12 @@ export function MessageReactionBar({
   const popoverRef = useRef<HTMLDivElement>(null)
   const chosenEmoji = (msg.reactions ?? []).find((reaction) => reaction.chosen)?.emoji
   const reactionPolicyHint = reactionsHint(reactionsPolicy)
+  const reactions = msg.reactions ?? []
   const { quick, more } = useMemo(
     () => buildReactionPickerGroups(reactionsPolicy),
     [reactionsPolicy],
   )
   const hasPicker = quick.length > 0 || more.length > 0
-  const hasContent =
-    (msg.reactions ?? []).length > 0 || hasPicker || Boolean(reactionPolicyHint)
 
   useEffect(() => {
     if (!popoverOpen) return
@@ -58,7 +57,7 @@ export function MessageReactionBar({
     }
   }, [popoverOpen])
 
-  if (!hasContent) return null
+  if (reactions.length === 0 && !hasPicker && !reactionPolicyHint) return null
 
   function handlePick(emoji: string) {
     void onReact(msg, emoji)
@@ -81,8 +80,10 @@ export function MessageReactionBar({
   }
 
   return (
-    <div className="message-reaction-bar">
-      {(msg.reactions ?? []).map((reaction) => {
+    <div
+      className={`message-reaction-bar${reactions.length === 0 ? ' message-reaction-bar--picker-only' : ''}`}
+    >
+      {reactions.map((reaction) => {
         const chipAllowed = canReactWith(
           reactionsPolicy,
           reaction.emoji,

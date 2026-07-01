@@ -236,6 +236,14 @@ export interface DialogMessageItem {
   has_media: boolean
   has_photo: boolean
   text: string
+  pinned?: boolean
+  is_poll?: boolean
+  reply_to_msg_id?: number | null
+  reply_to_text?: string
+  reply_to_sender_name?: string
+  media_file_name?: string
+  edited?: boolean
+  edited_date?: string
   reactions: DialogMessageReactionItem[]
 }
 
@@ -246,6 +254,43 @@ export interface ReactMessageData {
   message_id: number | null
   reply_to_msg_id: number | null
   emoji: string | null
+  message: string
+}
+
+export interface ForwardMessageData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  from_peer_id: string
+  to_peer_id: string
+  message_id: number | null
+  reply_to_msg_id: number | null
+  message: string
+}
+
+export interface ForwardMessagesData extends ForwardMessageData {
+  forwarded_count: number
+  message_ids: number[]
+}
+
+export interface DeleteMessagesData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  message_id: number | null
+  reply_to_msg_id: number | null
+  deleted_count: number
+  message_ids: number[]
+  message: string
+}
+
+export interface PinMessageData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  message_id: number | null
+  reply_to_msg_id: number | null
+  pinned: boolean
   message: string
 }
 
@@ -287,6 +332,8 @@ export interface PollOptionItem {
   label: string
   option_hex: string
   todo_item_id: number | null
+  chosen?: boolean
+  voters?: number | null
 }
 
 export interface PollInfoData {
@@ -306,6 +353,9 @@ export interface PollInfoData {
   close_date: string | null
   options: PollOptionItem[]
   suggested_option_index: number | null
+  user_voted?: boolean
+  total_voters?: number | null
+  can_view_stats?: boolean
   message: string
 }
 
@@ -318,6 +368,17 @@ export interface DialogMessagesData {
   messages: DialogMessageItem[]
   has_more_older: boolean
   reactions_policy: DialogReactionsPolicy
+  pinned_messages?: DialogMessageItem[]
+  message: string
+}
+
+export interface DialogPinnedMessagesData {
+  status: 'success' | 'error'
+  phone: string
+  peer_id: string
+  total: number
+  messages: DialogMessageItem[]
+  has_more_pinned?: boolean
   message: string
 }
 

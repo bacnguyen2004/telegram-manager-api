@@ -2,11 +2,16 @@ import type {
   ApiEnvelope,
   CheckSessionsData,
   DialogMessagesData,
+  DialogPinnedMessagesData,
   DialogsData,
   MarkDialogReadData,
   AddPollOptionData,
   CancelPollVoteData,
   ReactMessageData,
+  DeleteMessagesData,
+  ForwardMessageData,
+  ForwardMessagesData,
+  PinMessageData,
   VotePollData,
   PollInfoData,
   SendMessageData,
@@ -205,17 +210,35 @@ export const api = {
     )
   },
 
+  getPinnedMessages(phone: string, peerId: string, limit = 30, skip = 0) {
+    const params = new URLSearchParams({
+      peer_id: peerId,
+      limit: String(limit),
+    })
+    if (skip > 0) params.set('skip', String(skip))
+    return request<DialogPinnedMessagesData>(
+      `/dialogs/${encodeURIComponent(phone)}/pinned?${params}`,
+    )
+  },
+
   getDialogMessages(
     phone: string,
     peerId: string,
     limit = 40,
     offsetId = 0,
+    options?: { aroundId?: number; offsetDate?: string },
   ) {
     const params = new URLSearchParams({
       peer_id: peerId,
       limit: String(limit),
     })
     if (offsetId > 0) params.set('offset_id', String(offsetId))
+    if (options?.aroundId && options.aroundId > 0) {
+      params.set('around_id', String(options.aroundId))
+    }
+    if (options?.offsetDate?.trim()) {
+      params.set('offset_date', options.offsetDate.trim())
+    }
     return request<DialogMessagesData>(
       `/dialogs/${encodeURIComponent(phone)}/messages?${params}`,
     )
@@ -234,6 +257,51 @@ export const api = {
   messagePhotoUrl(phone: string, peerId: string, messageId: number) {
     const params = new URLSearchParams({ peer_id: peerId })
     return `/api/dialogs/${encodeURIComponent(phone)}/messages/${messageId}/photo?${params}`
+  },
+
+  messageMediaUrl(phone: string, peerId: string, messageId: number) {
+    const params = new URLSearchParams({ peer_id: peerId })
+    return `/api/dialogs/${encodeURIComponent(phone)}/messages/${messageId}/media?${params}`
+  },
+
+  getNewDialogMessages(
+    phone: string,
+    peerId: string,
+    minId: number,
+    limit = 50,
+  ) {
+    const params = new URLSearchParams({
+      peer_id: peerId,
+      min_id: String(minId),
+      limit: String(limit),
+    })
+    return request<DialogMessagesData>(
+      `/dialogs/${encodeURIComponent(phone)}/messages/new?${params}`,
+    )
+  },
+
+  searchDialogMessages(
+    phone: string,
+    peerId: string,
+    query: string,
+    limit = 50,
+  ) {
+    const params = new URLSearchParams({
+      peer_id: peerId,
+      q: query.trim(),
+      limit: String(limit),
+    })
+    return request<DialogMessagesData>(
+      `/dialogs/${encodeURIComponent(phone)}/messages/search?${params}`,
+    )
+  },
+
+  dialogMessageStreamUrl(phone: string, peerId: string, minId: number) {
+    const params = new URLSearchParams({
+      peer_id: peerId,
+      min_id: String(minId),
+    })
+    return `/api/dialogs/${encodeURIComponent(phone)}/messages/stream?${params}`
   },
 
   sendMessage(phone: string, peerId: string, text: string) {
@@ -384,6 +452,75 @@ export const api = {
     if (caption) form.append('caption', caption)
     if (replyToMsgId) form.append('reply_to_msg_id', String(replyToMsgId))
     return requestForm<SendMessageData>('/messages/send-media', form)
+  },
+
+  forwardMessage(
+    phone: string,
+    fromPeerId: string,
+    toPeerId: string,
+    messageId: number,
+  ) {
+    return request<ForwardMessageData>('/messages/forward', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        from_peer_id: fromPeerId,
+        to_peer_id: toPeerId,
+        message_id: messageId,
+      }),
+    })
+  },
+
+  forwardMessages(
+    phone: string,
+    fromPeerId: string,
+    toPeerId: string,
+    messageIds: number[],
+  ) {
+    return request<ForwardMessagesData>('/messages/forward-bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        from_peer_id: fromPeerId,
+        to_peer_id: toPeerId,
+        message_ids: messageIds,
+      }),
+    })
+  },
+
+  editMessage(phone: string, peerId: string, messageId: number, text: string) {
+    return request<SendMessageData>('/messages/edit', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        message_id: messageId,
+        text,
+      }),
+    })
+  },
+
+  deleteMessages(phone: string, peerId: string, messageIds: number[]) {
+    return request<DeleteMessagesData>('/messages/delete-bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        message_ids: messageIds,
+      }),
+    })
+  },
+
+  pinMessage(phone: string, peerId: string, messageId: number, unpin = false) {
+    return request<PinMessageData>('/messages/pin', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        peer_id: peerId,
+        message_id: messageId,
+        unpin,
+      }),
+    })
   },
 
   metadataOverview() {
