@@ -78,6 +78,9 @@ async function request<T>(
       ...options,
     })
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw err
+    }
     const hint =
       'Kiểm tra backend đang chạy và Vite proxy (vite.config.ts → VITE_API_PROXY_TARGET).'
     const msg = err instanceof Error ? err.message : 'Network error'
@@ -116,10 +119,11 @@ export const api = {
     })
   },
 
-  checkSessions(phones?: string[]) {
+  checkSessions(phones?: string[], signal?: AbortSignal) {
     return request<CheckSessionsData>('/sessions/check', {
       method: 'POST',
       body: JSON.stringify(phones ? { phones } : {}),
+      signal,
     })
   },
 

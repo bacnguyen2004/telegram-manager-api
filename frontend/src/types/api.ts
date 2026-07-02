@@ -135,6 +135,7 @@ export interface CheckSessionItem {
   me_id: number | null
   username: string | null
   message: string | null
+  last_synced_at: string | null
 }
 
 export interface CheckSessionsData {
@@ -440,6 +441,7 @@ export interface SessionMetaOverviewItem {
   display_name: string | null
   status: string
   source: string
+  imported_at: string | null
   last_synced_at: string | null
   last_group_scan: SessionGroupScanSummary | null
 }

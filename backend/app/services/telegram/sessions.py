@@ -202,6 +202,8 @@ class TelegramSessionService:
                 message=f"Khong tim thay file session: {session_file}",
             )
 
+        checked_at = datetime.now(timezone.utc).isoformat()
+
         try:
             async with telethon_session(
                 phone, self.api_id, self.api_hash, self.session_dir
@@ -222,6 +224,7 @@ class TelegramSessionService:
                         "unauthorized",
                         str(session_file),
                         message=message,
+                        last_synced_at=checked_at,
                     )
 
                 me = await client.get_me()
@@ -248,6 +251,7 @@ class TelegramSessionService:
                     "me_id": me.id,
                     "username": username,
                     "message": message,
+                    "last_synced_at": checked_at,
                 }
         except FloodWaitError as exc:
             message = f"Flood wait {exc.seconds}s"
@@ -265,6 +269,7 @@ class TelegramSessionService:
                 "error",
                 str(session_file),
                 message=message,
+                last_synced_at=checked_at,
             )
         except Exception as exc:
             metadata_store.sync_session(
@@ -276,7 +281,13 @@ class TelegramSessionService:
                 source="imported",
                 last_error=str(exc),
             )
-            return self._result(phone, "error", str(session_file), message=str(exc))
+            return self._result(
+                phone,
+                "error",
+                str(session_file),
+                message=str(exc),
+                last_synced_at=checked_at,
+            )
 
     def _pending_auth_path(self, phone: str) -> Path:
         safe_phone = re.sub(r"[^0-9A-Za-z_+-]+", "_", phone)
@@ -343,6 +354,7 @@ class TelegramSessionService:
         message: str,
         me_id: int | None = None,
         username: str | None = None,
+        last_synced_at: str | None = None,
     ) -> dict:
         return {
             "phone": phone,
@@ -351,6 +363,7 @@ class TelegramSessionService:
             "me_id": me_id,
             "username": username,
             "message": message,
+            "last_synced_at": last_synced_at,
         }
 
 

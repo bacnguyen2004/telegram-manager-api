@@ -335,6 +335,7 @@ class MetadataStore:
                             "display_name": meta.display_name,
                             "status": meta.status,
                             "source": meta.source,
+                            "imported_at": _iso(meta.imported_at),
                             "last_synced_at": _iso(meta.last_synced_at),
                             "last_group_scan": (
                                 {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { Pagination } from '../components/Pagination'
@@ -68,7 +68,8 @@ function sortGroups(
 }
 
 export function GroupsPage() {
-  const [phone, setPhone] = useState('')
+  const [searchParams] = useSearchParams()
+  const [phone, setPhone] = useState(() => searchParams.get('phone') ?? '')
   const [groups, setGroups] = useState<GroupItem[]>([])
   const [filter, setFilter] = useState<KindFilter>('all')
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>('all')

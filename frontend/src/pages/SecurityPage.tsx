@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { PasswordInput } from '../components/PasswordInput'
@@ -29,7 +29,8 @@ const PRIVACY_OPTIONS: {
 ]
 
 export function SecurityPage() {
-  const [phone, setPhone] = useState('')
+  const [searchParams] = useSearchParams()
+  const [phone, setPhone] = useState(() => searchParams.get('phone') ?? '')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [hint, setHint] = useState('')

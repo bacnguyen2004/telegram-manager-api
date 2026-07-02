@@ -43,6 +43,7 @@ class SessionMetaOverviewItem(BaseModel):
     display_name: str | None = None
     status: str
     source: str
+    imported_at: str | None = None
     last_synced_at: str | None = None
     last_group_scan: SessionGroupScanSummary | None = None
 

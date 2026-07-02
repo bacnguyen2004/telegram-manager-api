@@ -22,6 +22,7 @@ class CheckSessionItem(BaseModel):
     me_id: int | None = None
     username: str | None = None
     message: str | None = None
+    last_synced_at: str | None = None
 
 
 class CheckSessionsData(BaseModel):

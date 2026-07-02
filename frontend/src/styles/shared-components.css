@@ -1,0 +1,133 @@
+﻿/* Spinner */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.spinner--accent {
+  width: 28px;
+  height: 28px;
+  border-color: var(--accent-soft);
+  border-top-color: var(--accent);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Page headers */
+.page-header h1 {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+}
+
+.pagination-info {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-status {
+  min-width: 56px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pagination-size select {
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pagination--compact {
+  padding: 8px 16px;
+  margin-top: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.dialogs-list-panel .pagination--compact,
+.dialogs-messages-panel .pagination--compact {
+  flex-shrink: 0;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Theme toggle */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+  border-color: var(--accent-border);
+}
+
+.theme-toggle-icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.theme-toggle--compact {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.sidebar-foot-theme {
+  display: none;
+}
+
+

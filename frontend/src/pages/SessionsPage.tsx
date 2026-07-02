@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import './SessionsPage.css'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
@@ -12,21 +13,305 @@ import type {
   SessionMetaOverviewItem,
 } from '../types/api'
 import { auditActionLabel } from '../utils/auditLabels'
-import { formatBytes, formatDate } from '../utils/format'
+import { formatBytes, formatDate, formatRelativeDate } from '../utils/format'
 
-function calcStats(results: CheckSessionItem[]) {
-  return {
-    active: results.filter((item) => item.status === 'active').length,
-    unauthorized: results.filter((item) => item.status === 'unauthorized').length,
-    error: results.filter((item) => item.status === 'error').length,
+type SessionDisplaySource = 'check' | 'db' | null
+type SessionStatusFilter = 'all' | 'active' | 'unauthorized' | 'error' | 'unchecked'
+type SessionSortKey = 'phone' | 'name' | 'status' | 'checked'
+type SessionSortDir = 'asc' | 'desc'
+
+const STATUS_FILTER_OPTIONS: { id: SessionStatusFilter; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'active', label: 'Active' },
+  { id: 'unauthorized', label: 'Unauthorized' },
+  { id: 'error', label: 'Lỗi' },
+  { id: 'unchecked', label: 'Chưa check' },
+]
+
+const SORT_OPTIONS: { id: SessionSortKey; label: string }[] = [
+  { id: 'phone', label: 'Số ĐT' },
+  { id: 'name', label: 'Tên' },
+  { id: 'status', label: 'Trạng thái' },
+  { id: 'checked', label: 'Kiểm tra' },
+]
+
+const STATUS_SORT_ORDER: Record<string, number> = {
+  active: 0,
+  unauthorized: 1,
+  error: 2,
+  '': 3,
+}
+
+interface SessionDisplayInfo {
+  status: string | null
+  username: string | null
+  syncedAt: string | null
+  source: SessionDisplaySource
+}
+
+function phoneLookupKeys(phone: string): string[] {
+  const trimmed = phone.trim()
+  const keys = new Set<string>([trimmed])
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits) {
+    keys.add(digits)
+    keys.add(`+${digits}`)
   }
+  if (trimmed.startsWith('+')) {
+    keys.add(trimmed.slice(1))
+  }
+  return [...keys]
+}
+
+function buildMetaByPhone(items: SessionMetaOverviewItem[]): Map<string, SessionMetaOverviewItem> {
+  const map = new Map<string, SessionMetaOverviewItem>()
+  for (const item of items) {
+    for (const key of phoneLookupKeys(item.phone)) {
+      map.set(key, item)
+    }
+  }
+  return map
+}
+
+function getMetaForPhone(
+  phone: string,
+  metaByPhone: Map<string, SessionMetaOverviewItem>,
+): SessionMetaOverviewItem | undefined {
+  for (const key of phoneLookupKeys(phone)) {
+    const meta = metaByPhone.get(key)
+    if (meta) return meta
+  }
+  return undefined
+}
+
+function resolveSyncedAt(
+  checked: CheckSessionItem | undefined,
+  meta: SessionMetaOverviewItem | undefined,
+): string | null {
+  return checked?.last_synced_at ?? meta?.last_synced_at ?? meta?.imported_at ?? null
+}
+
+function resolveSessionDisplay(
+  checked: CheckSessionItem | undefined,
+  meta: SessionMetaOverviewItem | undefined,
+): SessionDisplayInfo {
+  const syncedAt = resolveSyncedAt(checked, meta)
+  if (checked) {
+    return {
+      status: checked.status,
+      username: checked.username,
+      syncedAt,
+      source: 'check',
+    }
+  }
+  if (meta?.status && meta.status !== 'unknown') {
+    return {
+      status: meta.status,
+      username: meta.username,
+      syncedAt,
+      source: 'db',
+    }
+  }
+  return {
+    status: null,
+    username: meta?.username ?? null,
+    syncedAt,
+    source: syncedAt ? 'db' : null,
+  }
+}
+
+function formatUsername(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+  return trimmed.startsWith('@') ? trimmed : `@${trimmed}`
+}
+
+function resolveAccountLabel(
+  meta: SessionMetaOverviewItem | undefined,
+  display: SessionDisplayInfo,
+): { primary: string; secondary: string | null } {
+  const displayName = meta?.display_name?.trim() || null
+  const username = formatUsername(display.username)
+  if (displayName && username) {
+    return { primary: displayName, secondary: username }
+  }
+  if (displayName) return { primary: displayName, secondary: null }
+  if (username) return { primary: username, secondary: null }
+  return { primary: '—', secondary: null }
+}
+
+function sessionMatchesFilter(
+  filter: SessionStatusFilter,
+  checked: CheckSessionItem | undefined,
+  meta: SessionMetaOverviewItem | undefined,
+): boolean {
+  if (filter === 'all') return true
+  const { status } = resolveSessionDisplay(checked, meta)
+  if (filter === 'unchecked') return !status
+  return status === filter
+}
+
+function accountSortName(
+  meta: SessionMetaOverviewItem | undefined,
+  display: SessionDisplayInfo,
+): string {
+  const label = resolveAccountLabel(meta, display)
+  if (label.primary !== '—') return label.primary.toLowerCase()
+  return label.secondary?.toLowerCase() ?? ''
+}
+
+function sessionInitials(
+  phone: string,
+  meta: SessionMetaOverviewItem | undefined,
+  display: SessionDisplayInfo,
+): string {
+  const name = meta?.display_name?.trim()
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) {
+      return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase()
+    }
+    return name.slice(0, 2).toUpperCase()
+  }
+  const username = display.username?.replace(/^@/, '').trim()
+  if (username) return username.slice(0, 2).toUpperCase()
+  const digits = phone.replace(/\D/g, '')
+  return digits.slice(-2) || '?'
+}
+
+function sortSessions(
+  phones: string[],
+  sortKey: SessionSortKey,
+  sortDir: SessionSortDir,
+  resultByPhone: Map<string, CheckSessionItem>,
+  metaByPhone: Map<string, SessionMetaOverviewItem>,
+): string[] {
+  const dir = sortDir === 'asc' ? 1 : -1
+  return [...phones].sort((a, b) => {
+    const metaA = getMetaForPhone(a, metaByPhone)
+    const metaB = getMetaForPhone(b, metaByPhone)
+    const checkedA = resultByPhone.get(a)
+    const checkedB = resultByPhone.get(b)
+    const displayA = resolveSessionDisplay(checkedA, metaA)
+    const displayB = resolveSessionDisplay(checkedB, metaB)
+
+    let cmp = 0
+    if (sortKey === 'phone') {
+      cmp = a.localeCompare(b, 'vi')
+    } else if (sortKey === 'name') {
+      cmp = accountSortName(metaA, displayA).localeCompare(accountSortName(metaB, displayB), 'vi')
+    } else if (sortKey === 'status') {
+      const orderA = STATUS_SORT_ORDER[displayA.status ?? ''] ?? 3
+      const orderB = STATUS_SORT_ORDER[displayB.status ?? ''] ?? 3
+      cmp = orderA - orderB
+    } else {
+      const timeA = displayA.syncedAt ? new Date(displayA.syncedAt).getTime() : 0
+      const timeB = displayB.syncedAt ? new Date(displayB.syncedAt).getTime() : 0
+      cmp = timeA - timeB
+    }
+    if (cmp === 0) cmp = a.localeCompare(b, 'vi')
+    return cmp * dir
+  })
+}
+
+function sessionMatchesSearch(
+  phone: string,
+  query: string,
+  checked: CheckSessionItem | undefined,
+  meta: SessionMetaOverviewItem | undefined,
+): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const fields = [
+    phone,
+    checked?.username ?? '',
+    meta?.username ?? '',
+    meta?.display_name ?? '',
+  ]
+  return fields.some((field) => field.toLowerCase().includes(q))
+}
+
+function formatLastChecked(display: SessionDisplayInfo): { label: string; title?: string } {
+  if (display.syncedAt) {
+    return {
+      label: formatRelativeDate(display.syncedAt),
+      title: formatDate(display.syncedAt),
+    }
+  }
+  if (display.source === 'check') {
+    return { label: 'Vừa xong', title: 'Vừa kiểm tra trong phiên này' }
+  }
+  return { label: '—' }
+}
+
+function patchMetaAfterCheck(
+  prev: Map<string, SessionMetaOverviewItem>,
+  item: CheckSessionItem,
+): Map<string, SessionMetaOverviewItem> {
+  if (!item.last_synced_at) return prev
+  const next = new Map(prev)
+  const existing = getMetaForPhone(item.phone, prev)
+  const updated: SessionMetaOverviewItem = {
+    phone: item.phone,
+    username: item.username ?? existing?.username ?? null,
+    display_name: existing?.display_name ?? null,
+    status: item.status,
+    source: existing?.source ?? 'imported',
+    imported_at: existing?.imported_at ?? item.last_synced_at,
+    last_synced_at: item.last_synced_at,
+    last_group_scan: existing?.last_group_scan ?? null,
+  }
+  for (const key of phoneLookupKeys(item.phone)) {
+    next.set(key, updated)
+  }
+  return next
+}
+
+function sortCheckLogItems(items: CheckSessionItem[]): CheckSessionItem[] {
+  return [...items].sort((a, b) => {
+    const orderA = STATUS_SORT_ORDER[a.status] ?? 3
+    const orderB = STATUS_SORT_ORDER[b.status] ?? 3
+    if (orderA !== orderB) return orderA - orderB
+    return a.phone.localeCompare(b.phone, 'vi')
+  })
+}
+
+function calcCheckLogStats(items: CheckSessionItem[]) {
+  let active = 0
+  let unauthorized = 0
+  let error = 0
+  for (const item of items) {
+    if (item.status === 'active') active += 1
+    else if (item.status === 'unauthorized') unauthorized += 1
+    else if (item.status === 'error') error += 1
+  }
+  return { active, unauthorized, error, total: items.length }
+}
+
+function calcStats(
+  phones: string[],
+  resultByPhone: Map<string, CheckSessionItem>,
+  metaByPhone: Map<string, SessionMetaOverviewItem>,
+) {
+  let active = 0
+  let unauthorized = 0
+  let error = 0
+  for (const phone of phones) {
+    const { status } = resolveSessionDisplay(
+      resultByPhone.get(phone),
+      getMetaForPhone(phone, metaByPhone),
+    )
+    if (status === 'active') active += 1
+    else if (status === 'unauthorized') unauthorized += 1
+    else if (status === 'error') error += 1
+  }
+  return { active, unauthorized, error }
 }
 
 export function SessionsPage() {
   const [sessions, setSessions] = useState<string[]>([])
   const [total, setTotal] = useState(0)
   const [checkResults, setCheckResults] = useState<CheckSessionItem[]>([])
-  const [stats, setStats] = useState({ active: 0, unauthorized: 0, error: 0 })
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
   const [checkingPhone, setCheckingPhone] = useState<string | null>(null)
@@ -40,6 +325,15 @@ export function SessionsPage() {
   const [metaByPhone, setMetaByPhone] = useState<Map<string, SessionMetaOverviewItem>>(
     new Map(),
   )
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>('all')
+  const [sortKey, setSortKey] = useState<SessionSortKey>('checked')
+  const [sortDir, setSortDir] = useState<SessionSortDir>('desc')
+  const [checkLogVisible, setCheckLogVisible] = useState(false)
+  const [lastCheckAt, setLastCheckAt] = useState<string | null>(null)
+  const [checkTotal, setCheckTotal] = useState(0)
+  const checkAbortRef = useRef(false)
+  const checkRequestRef = useRef<AbortController | null>(null)
 
   const loadMetadata = useCallback(async () => {
     try {
@@ -48,7 +342,7 @@ export function SessionsPage() {
         setMetaByPhone(new Map())
         return
       }
-      setMetaByPhone(new Map(res.data.items.map((item) => [item.phone, item])))
+      setMetaByPhone(buildMetaByPhone(res.data.items))
     } catch {
       setMetaByPhone(new Map())
     }
@@ -77,28 +371,107 @@ export function SessionsPage() {
     void loadMetadata()
   }, [loadSessions, loadMetadata])
 
+  useEffect(() => {
+    if (!success) return
+    const timer = window.setTimeout(() => setSuccess(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [success])
+
+  function handleStopCheck() {
+    checkAbortRef.current = true
+    checkRequestRef.current?.abort()
+  }
+
   async function handleCheckAll() {
+    const phonesToCheck = [...sessions]
+    if (phonesToCheck.length === 0) return
+
     setChecking(true)
+    setCheckLogVisible(true)
+    setCheckResults([])
+    setLastCheckAt(null)
+    setCheckTotal(phonesToCheck.length)
     setError('')
     setSuccess('')
+    checkAbortRef.current = false
+    checkRequestRef.current = null
+
+    const collected: CheckSessionItem[] = []
+    let active = 0
+    let unauthorized = 0
+    let errorCount = 0
+    let stopped = false
+
     try {
-      const res = await api.checkSessions()
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Kiểm tra session thất bại')
-        return
+      for (const phone of phonesToCheck) {
+        if (checkAbortRef.current) {
+          stopped = true
+          break
+        }
+
+        const controller = new AbortController()
+        checkRequestRef.current = controller
+
+        try {
+          const res = await api.checkSessions([phone], controller.signal)
+          if (checkAbortRef.current) {
+            stopped = true
+            break
+          }
+          if (!res.success || !res.data) {
+            setError(res.error ?? 'Kiểm tra session thất bại')
+            break
+          }
+
+          const item = res.data.sessions[0]
+          if (!item) continue
+
+          collected.push(item)
+          setCheckResults([...collected])
+          setMetaByPhone((prev) => patchMetaAfterCheck(prev, item))
+
+          if (item.status === 'active') active += 1
+          else if (item.status === 'unauthorized') unauthorized += 1
+          else if (item.status === 'error') errorCount += 1
+        } catch (err) {
+          if (checkAbortRef.current || isAbortError(err)) {
+            stopped = true
+            break
+          }
+          throw err
+        } finally {
+          if (checkRequestRef.current === controller) {
+            checkRequestRef.current = null
+          }
+        }
       }
-      setCheckResults(res.data.sessions)
-      setStats({
-        active: res.data.active,
-        unauthorized: res.data.unauthorized,
-        error: res.data.error,
-      })
-      void loadMetadata()
+
+      if (collected.length > 0) {
+        setLastCheckAt(new Date().toISOString())
+        void loadMetadata()
+      }
+
+      if (stopped) {
+        setSuccess(
+          collected.length > 0
+            ? `Đã dừng — ${collected.length}/${phonesToCheck.length} session đã kiểm tra`
+            : 'Đã dừng kiểm tra',
+        )
+      } else if (collected.length > 0) {
+        setSuccess(
+          `Kiểm tra xong — ${active} active, ${unauthorized} unauthorized, ${errorCount} lỗi`,
+        )
+      }
     } catch {
       setError('Không kết nối được API khi kiểm tra session.')
     } finally {
+      checkRequestRef.current = null
       setChecking(false)
     }
+  }
+
+  function isAbortError(err: unknown): boolean {
+    return err instanceof Error && err.name === 'AbortError'
   }
 
   async function handleCheckOne(phone: string) {
@@ -112,11 +485,12 @@ export function SessionsPage() {
       }
       const item = res.data.sessions[0]
       if (!item) return
-      setCheckResults((prev) => {
-        const next = [...prev.filter((row) => row.phone !== phone), item]
-        setStats(calcStats(next))
-        return next
-      })
+      setCheckResults((prev) => [
+        ...prev.filter((row) => row.phone !== phone),
+        item,
+      ])
+      setMetaByPhone((prev) => patchMetaAfterCheck(prev, item))
+      void loadMetadata()
     } catch {
       setError('Không kết nối được API khi kiểm tra session.')
     } finally {
@@ -211,7 +585,99 @@ export function SessionsPage() {
     setMeData(null)
   }
 
-  const resultByPhone = new Map(checkResults.map((item) => [item.phone, item]))
+  const resultByPhone = useMemo(
+    () => new Map(checkResults.map((item) => [item.phone, item])),
+    [checkResults],
+  )
+
+  const stats = useMemo(
+    () => calcStats(sessions, resultByPhone, metaByPhone),
+    [sessions, resultByPhone, metaByPhone],
+  )
+
+  const hasStatusData = checkResults.length > 0 || metaByPhone.size > 0
+
+  const searchMatchedSessions = useMemo(
+    () =>
+      sessions.filter((phone) =>
+        sessionMatchesSearch(
+          phone,
+          search,
+          resultByPhone.get(phone),
+          getMetaForPhone(phone, metaByPhone),
+        ),
+      ),
+    [sessions, search, resultByPhone, metaByPhone],
+  )
+
+  const filterCounts = useMemo(() => {
+    const counts: Record<SessionStatusFilter, number> = {
+      all: 0,
+      active: 0,
+      unauthorized: 0,
+      error: 0,
+      unchecked: 0,
+    }
+    for (const phone of searchMatchedSessions) {
+      counts.all += 1
+      const display = resolveSessionDisplay(
+        resultByPhone.get(phone),
+        getMetaForPhone(phone, metaByPhone),
+      )
+      if (!display.status) {
+        counts.unchecked += 1
+        continue
+      }
+      if (display.status === 'active') counts.active += 1
+      else if (display.status === 'unauthorized') counts.unauthorized += 1
+      else if (display.status === 'error') counts.error += 1
+    }
+    return counts
+  }, [searchMatchedSessions, resultByPhone, metaByPhone])
+
+  const filteredSessions = useMemo(() => {
+    const filtered = searchMatchedSessions.filter((phone) =>
+      sessionMatchesFilter(
+        statusFilter,
+        resultByPhone.get(phone),
+        getMetaForPhone(phone, metaByPhone),
+      ),
+    )
+    return sortSessions(filtered, sortKey, sortDir, resultByPhone, metaByPhone)
+  }, [
+    searchMatchedSessions,
+    statusFilter,
+    sortKey,
+    sortDir,
+    resultByPhone,
+    metaByPhone,
+  ])
+
+  const hasActiveFilters = Boolean(search.trim()) || statusFilter !== 'all'
+
+  const checkLogItems = useMemo(() => sortCheckLogItems(checkResults), [checkResults])
+  const checkLogStats = useMemo(() => calcCheckLogStats(checkResults), [checkResults])
+  const showCheckLog = checkLogVisible && (checking || checkResults.length > 0)
+
+  function setSort(nextKey: SessionSortKey) {
+    if (sortKey === nextKey) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(nextKey)
+    setSortDir(nextKey === 'checked' ? 'desc' : 'asc')
+  }
+
+  function sortPillLabel(key: SessionSortKey, label: string): string {
+    if (sortKey !== key) return label
+    return `${label} ${sortDir === 'asc' ? '↑' : '↓'}`
+  }
+
+  function clearFilters() {
+    setSearch('')
+    setStatusFilter('all')
+  }
+
   const {
     items: pagedSessions,
     page,
@@ -221,59 +687,275 @@ export function SessionsPage() {
     to,
     pageSize,
     setPageSize,
-  } = usePagination(sessions, 10)
+  } = usePagination(filteredSessions, 10)
 
   return (
-    <div className="page">
-      <header className="page-header">
+    <div className="page page--sessions">
+      <header className="page-header sessions-page-header">
         <div>
           <h1>Sessions</h1>
           <p className="page-desc">
-            Quản lý file <code>.session</code> Telegram trên server
+            Quản lý file <code>.session</code>, kiểm tra trạng thái và đồng bộ metadata DB.
           </p>
         </div>
-        <div className="header-actions">
-          <button type="button" className="btn btn--ghost" onClick={() => void loadSessions()}>
-            Làm mới
-          </button>
+        <div className="sessions-page-actions">
           <button
             type="button"
-            className="btn btn--primary"
-            disabled={checking || loading}
-            onClick={() => void handleCheckAll()}
+            className="btn btn--ghost"
+            onClick={() => {
+              void loadSessions()
+              void loadMetadata()
+            }}
+            disabled={loading || checking}
           >
-            {checking ? 'Đang kiểm tra…' : 'Kiểm tra tất cả'}
+            {loading ? 'Đang tải…' : 'Làm mới'}
           </button>
+          {checking ? (
+            <>
+              <button type="button" className="btn btn--primary" disabled>
+                {checkTotal > 0
+                  ? `Đang kiểm tra ${checkResults.length}/${checkTotal}…`
+                  : 'Đang kiểm tra…'}
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={handleStopCheck}
+              >
+                Dừng
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={loading || sessions.length === 0}
+              onClick={() => void handleCheckAll()}
+            >
+              Kiểm tra tất cả
+            </button>
+          )}
         </div>
       </header>
 
       <Alert type="error" message={error} />
       <Alert type="success" message={success} />
 
-      <section className="stats-grid">
-        <article className="stat-card">
+      <section className="stats-grid sessions-stats">
+        <article className="stat-card sessions-stat-card sessions-stat-card--total">
           <p className="stat-label">Tổng session</p>
           <p className="stat-value">{loading ? '—' : total}</p>
+          <p className="sessions-stat-foot">Trên disk</p>
         </article>
-        <article className="stat-card stat-card--active">
+        <article className="stat-card sessions-stat-card sessions-stat-card--active">
           <p className="stat-label">Active</p>
-          <p className="stat-value">{checkResults.length ? stats.active : '—'}</p>
+          <p className="stat-value">{hasStatusData ? stats.active : '—'}</p>
+          <p className="sessions-stat-foot">Live</p>
         </article>
-        <article className="stat-card stat-card--warn">
+        <article className="stat-card sessions-stat-card sessions-stat-card--warn">
           <p className="stat-label">Unauthorized</p>
-          <p className="stat-value">{checkResults.length ? stats.unauthorized : '—'}</p>
+          <p className="stat-value">{hasStatusData ? stats.unauthorized : '—'}</p>
+          <p className="sessions-stat-foot">Hết hạn</p>
         </article>
-        <article className="stat-card stat-card--error">
+        <article className="stat-card sessions-stat-card sessions-stat-card--error">
           <p className="stat-label">Lỗi</p>
-          <p className="stat-value">{checkResults.length ? stats.error : '—'}</p>
+          <p className="stat-value">{hasStatusData ? stats.error : '—'}</p>
+          <p className="sessions-stat-foot">Cần xử lý</p>
         </article>
       </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Danh sách</h2>
-          {!loading && <span className="panel-meta">{sessions.length} session</span>}
+      {showCheckLog ? (
+        <section className="panel sessions-check-log">
+          <div className="sessions-check-log-head">
+            <div>
+              <h2>Kết quả kiểm tra</h2>
+              <p className="panel-meta">
+                {checking
+                  ? checkTotal > 0
+                    ? `Tiến trình ${checkResults.length}/${checkTotal}`
+                    : 'Đang kiểm tra từng session…'
+                  : lastCheckAt
+                    ? `${checkLogStats.total} session · ${formatDate(lastCheckAt)}`
+                    : `${checkLogStats.total} session`}
+              </p>
+            </div>
+            <div className="sessions-check-log-actions">
+              {checking ? (
+                <button
+                  type="button"
+                  className="btn btn--danger btn--sm"
+                  onClick={handleStopCheck}
+                >
+                  Dừng
+                </button>
+              ) : null}
+              {!checking && checkResults.length > 0 ? (
+                <div className="sessions-check-log-chips">
+                  <span className="sessions-check-log-chip sessions-check-log-chip--success">
+                    {checkLogStats.active} active
+                  </span>
+                  {checkLogStats.unauthorized > 0 ? (
+                    <span className="sessions-check-log-chip sessions-check-log-chip--warn">
+                      {checkLogStats.unauthorized} unauthorized
+                    </span>
+                  ) : null}
+                  {checkLogStats.error > 0 ? (
+                    <span className="sessions-check-log-chip sessions-check-log-chip--error">
+                      {checkLogStats.error} lỗi
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {!checking ? (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setCheckLogVisible(false)}
+                >
+                  Đóng
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {checking && checkResults.length === 0 ? (
+            <div className="sessions-check-log-loading">
+              <span className="sessions-check-log-spinner" aria-hidden />
+              <span>Đang kết nối Telegram và kiểm tra session…</span>
+            </div>
+          ) : checkResults.length > 0 ? (
+            <div className="table-wrap sessions-check-log-table-wrap">
+              <table className="data-table sessions-check-log-table">
+                <thead>
+                  <tr>
+                    <th>Số điện thoại</th>
+                    <th>Trạng thái</th>
+                    <th>Username</th>
+                    <th>Thông báo</th>
+                    <th>Thời gian</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {checkLogItems.map((item) => (
+                    <tr
+                      key={item.phone}
+                      className={`sessions-check-log-row sessions-check-log-row--${item.status}`}
+                    >
+                      <td>
+                        <span className="phone">{item.phone}</span>
+                      </td>
+                      <td>
+                        <StatusBadge status={item.status} />
+                      </td>
+                      <td>{formatUsername(item.username) ?? '—'}</td>
+                      <td>
+                        <span
+                          className={`sessions-check-log-message${item.message ? '' : ' muted'}`}
+                          title={item.message ?? undefined}
+                        >
+                          {item.message?.trim() || '—'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="session-last-checked">
+                          {item.last_synced_at
+                            ? formatRelativeDate(item.last_synced_at)
+                            : '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {checking ? (
+                <div className="sessions-check-log-progress">
+                  <span className="sessions-check-log-spinner" aria-hidden />
+                  <span>
+                    Đang kiểm tra{' '}
+                    {checkTotal > 0
+                      ? `${checkResults.length + 1}/${checkTotal}`
+                      : 'session tiếp theo'}
+                    …
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section className="panel sessions-panel">
+        <div className="sessions-list-head">
+          <div>
+            <h2>Danh sách account</h2>
+            <p className="panel-meta">
+              {!loading
+                ? hasActiveFilters
+                  ? `${filteredSessions.length} / ${sessions.length} session`
+                  : `${sessions.length} session`
+                : 'Đang tải…'}
+            </p>
+          </div>
+          {!loading && sessions.length > 0 ? (
+            <span className="sessions-count-badge">{filteredSessions.length}</span>
+          ) : null}
         </div>
+
+        {!loading && sessions.length > 0 ? (
+          <div className="sessions-list-toolbar">
+            <input
+              type="search"
+              className="sessions-list-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm số điện thoại, tên hoặc @username…"
+              autoComplete="off"
+            />
+
+            <div className="sessions-toolbar-block">
+              <span className="sessions-toolbar-label">Trạng thái</span>
+              <div className="sessions-filter-pills">
+                {STATUS_FILTER_OPTIONS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`sessions-filter-pill sessions-filter-pill--${item.id}${statusFilter === item.id ? ' sessions-filter-pill--selected' : ''}`}
+                    onClick={() => setStatusFilter(item.id)}
+                  >
+                    {item.label}
+                    <span>{filterCounts[item.id]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="sessions-toolbar-block">
+              <span className="sessions-toolbar-label">Sắp xếp</span>
+              <div className="sessions-sort-pills">
+                {SORT_OPTIONS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`sessions-sort-pill${sortKey === item.id ? ' sessions-sort-pill--active' : ''}`}
+                    onClick={() => setSort(item.id)}
+                  >
+                    {sortPillLabel(item.id, item.label)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm sessions-clear-filters"
+                onClick={clearFilters}
+              >
+                Xóa bộ lọc
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="empty-state">Đang tải…</div>
@@ -284,52 +966,89 @@ export function SessionsPage() {
               Vào <strong>Đăng nhập</strong> để tạo file <code>.session</code>.
             </p>
           </div>
+        ) : filteredSessions.length === 0 ? (
+          <div className="empty-state sessions-empty-filter">
+            <p>Không có session nào khớp bộ lọc hiện tại.</p>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={clearFilters}>
+              Xóa bộ lọc
+            </button>
+          </div>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
+          <div className="table-wrap sessions-table-wrap">
+            <table className="data-table sessions-table">
               <thead>
                 <tr>
                   <th>Số điện thoại</th>
                   <th>Trạng thái</th>
-                  <th>Username</th>
-                  <th>Nhóm / kênh</th>
+                  <th>Tên / Username</th>
+                  <th>Kiểm tra gần nhất</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {pagedSessions.map((phone) => {
                   const checked = resultByPhone.get(phone)
-                  const meta = metaByPhone.get(phone)
-                  const scan = meta?.last_group_scan
+                  const meta = getMetaForPhone(phone, metaByPhone)
+                  const display = resolveSessionDisplay(checked, meta)
                   const isDeleting = deletingPhone === phone
                   const isChecking = checkingPhone === phone
+                  const lastChecked = formatLastChecked(display)
+                  const account = resolveAccountLabel(meta, display)
+                  const statusTitle =
+                    display.source === 'db'
+                      ? 'Trạng thái từ DB'
+                      : display.source === 'check'
+                        ? 'Vừa kiểm tra'
+                        : undefined
+                  const rowStatus = display.status ?? 'unchecked'
                   return (
-                    <tr key={phone}>
+                    <tr
+                      key={phone}
+                      className={`sessions-row sessions-row--${rowStatus}`}
+                    >
                       <td>
-                        <span className="phone">{phone}</span>
+                        <div className="sessions-phone-cell">
+                          <span className="sessions-avatar" aria-hidden>
+                            {sessionInitials(phone, meta, display)}
+                          </span>
+                          <span className="phone">{phone}</span>
+                        </div>
                       </td>
                       <td>
-                        {checked ? (
-                          <StatusBadge status={checked.status} />
+                        {display.status ? (
+                          <span className="session-status-cell" title={statusTitle}>
+                            <StatusBadge status={display.status} />
+                            {display.source === 'db' ? (
+                              <span className="session-status-source muted">DB</span>
+                            ) : null}
+                          </span>
                         ) : (
                           <span className="muted">Chưa kiểm tra</span>
                         )}
                       </td>
-                      <td>{checked?.username ?? meta?.username ?? '—'}</td>
                       <td>
-                        {scan ? (
-                          <span className="session-scan-summary" title={formatDate(scan.scanned_at)}>
-                            {scan.group_count} nhóm · {scan.channel_count} kênh
-                          </span>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
+                        <div className="session-account-cell">
+                          <span className="session-account-primary">{account.primary}</span>
+                          {account.secondary ? (
+                            <span className="session-account-secondary muted">
+                              {account.secondary}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
-                      <td className="cell-actions">
+                      <td>
+                        <span
+                          className={`session-last-checked${lastChecked.label === '—' ? ' muted' : ''}`}
+                          title={lastChecked.title}
+                        >
+                          {lastChecked.label}
+                        </span>
+                      </td>
+                      <td className="cell-actions sessions-actions">
                         <button
                           type="button"
                           className="btn btn--sm btn--ghost"
-                          disabled={isChecking}
+                          disabled={isChecking || checking}
                           onClick={() => void handleCheckOne(phone)}
                         >
                           {isChecking ? '…' : 'Check'}
@@ -343,11 +1062,12 @@ export function SessionsPage() {
                         </button>
                         <button
                           type="button"
-                          className="btn btn--sm btn--danger"
+                          className="btn btn--sm btn--danger btn--icon-text"
                           disabled={isDeleting}
                           onClick={() => void handleDelete(phone)}
+                          title="Xóa session"
                         >
-                          {isDeleting ? 'Đang xóa…' : 'Xóa'}
+                          {isDeleting ? '…' : 'Xóa'}
                         </button>
                       </td>
                     </tr>
@@ -358,11 +1078,11 @@ export function SessionsPage() {
           </div>
         )}
 
-        {!loading && sessions.length > 0 && (
+        {!loading && filteredSessions.length > 0 && (
           <Pagination
             page={page}
             totalPages={totalPages}
-            total={sessions.length}
+            total={filteredSessions.length}
             from={from}
             to={to}
             onPageChange={setPage}
@@ -425,6 +1145,18 @@ export function SessionsPage() {
                         <span>Trạng thái DB</span>
                         <StatusBadge status={detailData.db_metadata.status} />
                       </div>
+                      {detailData.db_metadata.display_name ? (
+                        <div className="detail-row">
+                          <span>Tên hiển thị</span>
+                          <strong>{detailData.db_metadata.display_name}</strong>
+                        </div>
+                      ) : null}
+                      {detailData.db_metadata.telegram_user_id ? (
+                        <div className="detail-row">
+                          <span>Telegram ID</span>
+                          <strong>{detailData.db_metadata.telegram_user_id}</strong>
+                        </div>
+                      ) : null}
                       <div className="detail-row">
                         <span>Import lúc</span>
                         <strong>{formatDate(detailData.db_metadata.imported_at)}</strong>
@@ -436,28 +1168,6 @@ export function SessionsPage() {
                       {detailData.db_metadata.last_error && (
                         <p className="detail-message">{detailData.db_metadata.last_error}</p>
                       )}
-                      {detailData.db_metadata.last_group_scan ? (
-                        <>
-                          <h4 className="modal-section-title">Quét nhóm gần nhất</h4>
-                          <div className="detail-row">
-                            <span>Tổng</span>
-                            <strong>{detailData.db_metadata.last_group_scan.total}</strong>
-                          </div>
-                          <div className="detail-row">
-                            <span>Nhóm / kênh</span>
-                            <strong>
-                              {detailData.db_metadata.last_group_scan.group_count} /{' '}
-                              {detailData.db_metadata.last_group_scan.channel_count}
-                            </strong>
-                          </div>
-                          <div className="detail-row">
-                            <span>Lúc</span>
-                            <strong>
-                              {formatDate(detailData.db_metadata.last_group_scan.scanned_at)}
-                            </strong>
-                          </div>
-                        </>
-                      ) : null}
                       {detailData.db_metadata.recent_audit.length > 0 ? (
                         <>
                           <h4 className="modal-section-title">Audit gần đây</h4>
@@ -518,7 +1228,21 @@ export function SessionsPage() {
               )}
             </div>
             {selectedPhone && !modalLoading && (
-              <div className="modal-foot">
+              <div className="modal-foot sessions-modal-foot">
+                <div className="sessions-modal-links">
+                  <Link
+                    to={`/security?phone=${encodeURIComponent(selectedPhone)}`}
+                    className="btn btn--ghost btn--sm"
+                  >
+                    Bảo mật
+                  </Link>
+                  <Link
+                    to={`/audit?phone=${encodeURIComponent(selectedPhone)}`}
+                    className="btn btn--ghost btn--sm"
+                  >
+                    Audit
+                  </Link>
+                </div>
                 <button
                   type="button"
                   className="btn btn--danger"

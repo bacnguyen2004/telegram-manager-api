@@ -1,0 +1,296 @@
+﻿/* Responsive */
+@media (max-width: 1100px) {
+  .main-wrap:has(.page--dashboard) {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .page--dashboard {
+    min-height: auto;
+  }
+
+  .quick-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dash-stats,
+  .dash-quick-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dash-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .dash-hero-aside {
+    align-self: stretch;
+  }
+
+  .conv-hero {
+    padding: 18px 16px;
+  }
+
+  .conv-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .conv-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .conv-action-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .conv-action-group,
+  .conv-action-group--primary {
+    width: 100%;
+  }
+
+  .conv-panel-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .conv-meta-row--inline {
+    justify-content: flex-start;
+  }
+
+  .conv-prompt-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .conv-prompt-analysis-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .conv-prompt-analysis-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .conv-prompt-control--templates {
+    grid-column: 1 / -1;
+  }
+
+  .conv-inline-grid,
+  .conv-inline-grid--3 {
+    grid-template-columns: 1fr;
+  }
+
+  .conv-task-item {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 960px) {
+  .dash-api-table {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .topbar {
+    padding: 12px 16px;
+  }
+
+  .main {
+    padding: 16px;
+  }
+
+  .main-wrap .topbar {
+    display: none;
+  }
+
+  .sidebar-foot-theme {
+    display: block;
+  }
+
+  .main-wrap:has(.page--dialogs-active),
+  .main-wrap:has(.page--groups-active),
+  .main-wrap:has(.page--security-active) {
+    height: 100vh;
+  }
+
+  .main:has(.page--dialogs-active),
+  .main:has(.page--groups-active),
+  .main:has(.page--security-active) {
+    padding: 12px 16px;
+  }
+
+  .dialogs-workspace {
+    grid-template-columns: 1fr;
+    min-height: 360px;
+  }
+
+  .groups-page-header {
+    align-items: stretch;
+  }
+
+  .groups-session-bar {
+    width: 100%;
+  }
+
+  .groups-session-bar .field {
+    flex: 1;
+    min-width: 0;
+  }
+
+
+  .groups-workspace {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .groups-control-panel,
+  .groups-list-panel {
+    min-height: auto;
+  }
+
+  .groups-list-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .groups-list-actions {
+    justify-content: flex-end;
+    padding-top: 4px;
+  }
+
+  .groups-stats--wide {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .groups-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .groups-leave-all-btn {
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .groups-filter-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .groups-page-header,
+  .security-page-header {
+    align-items: stretch;
+  }
+
+  .security-workspace {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .security-session-panel {
+    min-height: auto;
+  }
+
+  .security-privacy-options {
+    grid-template-columns: 1fr;
+  }
+
+  .security-submit-btn {
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .groups-directory-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .groups-filter-pills {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .quick-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hero-card,
+  .dash-hero {
+    padding: 20px;
+  }
+
+  .dash-stats,
+  .dash-quick-grid {
+    grid-template-columns: 1fr;
+  }
+
+  a.dash-quick-card {
+    grid-template-columns: auto 1fr;
+  }
+
+  .dash-quick-arrow {
+    display: none;
+  }
+
+  .tasks-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .tasks-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .tasks-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tasks-delay-range,
+  .tasks-option-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tasks-accounts-panel,
+  .tasks-workflow-panel {
+    min-height: auto;
+  }
+
+  .audit-panel-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .audit-filters {
+    width: 100%;
+  }
+
+  .audit-filters .field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .audit-cell-detail {
+    max-width: 200px;
+  }
+
+  .audit-toolbar {
+    padding: 12px 16px;
+  }
+
+  .audit-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .audit-filter-label {
+    min-width: 0;
+  }
+
+  .audit-recent-item {
+    grid-template-columns: 10px 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .audit-recent-item .audit-status {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
