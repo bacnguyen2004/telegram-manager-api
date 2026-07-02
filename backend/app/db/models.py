@@ -25,6 +25,19 @@ class SessionMeta(SQLModel, table=True):
     has_avatar: bool = Field(default=False)
     avatar_path: str | None = Field(default=None, max_length=256)
     avatar_updated_at: datetime | None = Field(default=None)
+    custom_fields: str = Field(default="{}")
+
+
+class RosterColumn(SQLModel, table=True):
+    """User-defined column for the account roster spreadsheet."""
+
+    __tablename__ = "roster_columns"
+
+    id: int | None = Field(default=None, primary_key=True)
+    column_key: str = Field(max_length=64, unique=True, index=True)
+    label: str = Field(max_length=128)
+    sort_order: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class GroupScan(SQLModel, table=True):

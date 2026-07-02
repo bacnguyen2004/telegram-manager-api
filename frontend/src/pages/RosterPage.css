@@ -1,0 +1,272 @@
+.page--roster {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.roster-page-kicker {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.roster-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.roster-toolbar-left,
+.roster-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.roster-search {
+  min-width: min(280px, 100%);
+}
+
+.roster-search input {
+  width: 100%;
+}
+
+.roster-sheet-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.roster-sheet-wrap {
+  overflow: auto;
+  max-height: min(70vh, 720px);
+  border-radius: inherit;
+}
+
+.roster-sheet {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.roster-sheet thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border);
+  padding: 0;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.roster-sheet tbody td {
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  vertical-align: middle;
+  background: var(--bg-elevated);
+}
+
+.roster-sheet tbody tr:hover td {
+  background: var(--bg-hover, rgba(36, 129, 204, 0.04));
+}
+
+.roster-sheet tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.roster-th-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+}
+
+.roster-th-btn:hover {
+  color: var(--text-strong);
+  background: var(--bg-hover, rgba(36, 129, 204, 0.06));
+}
+
+.roster-th-btn--active {
+  color: var(--accent);
+}
+
+.roster-th-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roster-th-sort {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.roster-th-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.roster-col-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.roster-col-action:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.roster-col-action--danger:hover {
+  color: var(--danger);
+  background: rgba(220, 53, 69, 0.1);
+}
+
+.roster-col--fixed {
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.roster-col--phone {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 140px;
+  box-shadow: 1px 0 0 var(--border);
+}
+
+.roster-sheet thead .roster-col--phone {
+  z-index: 4;
+}
+
+.roster-col--custom {
+  min-width: 160px;
+}
+
+.roster-cell-fixed {
+  padding: 10px 12px;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roster-cell-fixed--muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.roster-cell-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+}
+
+.roster-cell-input:hover {
+  background: rgba(36, 129, 204, 0.04);
+}
+
+.roster-cell-input:focus {
+  outline: none;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.roster-cell-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+
+.roster-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.roster-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.roster-local-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+  font-weight: 600;
+}
+
+.roster-add-col-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.roster-add-col-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.roster-add-col-form input {
+  font-weight: 400;
+}
+
+.roster-add-col-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

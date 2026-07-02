@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { ErrorBoundary } from './ErrorBoundary'
 import { HealthBadge } from './HealthBadge'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -8,6 +9,7 @@ const navSections = [
     items: [
       { to: '/', label: 'Tổng quan', end: true },
       { to: '/sessions', label: 'Sessions', end: false },
+      { to: '/roster', label: 'Sổ acc', end: false },
       { to: '/groups', label: 'Groups', end: false },
       { to: '/dialogs', label: 'Dialogs', end: false },
       { to: '/tasks', label: 'Tasks', end: false },
@@ -34,6 +36,7 @@ function pageTitle(pathname: string): string {
   const map: Record<string, string> = {
     '/': 'Tổng quan',
     '/sessions': 'Sessions',
+    '/roster': 'Sổ acc',
     '/groups': 'Groups',
     '/dialogs': 'Dialogs',
     '/tasks': 'Tasks',
@@ -118,7 +121,9 @@ export function Layout() {
           </div>
         </header>
         <main className="main">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

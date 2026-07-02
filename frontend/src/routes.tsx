@@ -10,21 +10,24 @@ import { SecurityPage } from './pages/SecurityPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { ConversationPage } from './pages/ConversationPage'
 import { TasksPage } from './pages/TasksPage'
+import { RosterPage } from './pages/RosterPage'
 
 export const appRouter = createBrowserRouter([
   {
+    path: '/',
     element: <Layout />,
     children: [
-      { path: '/', element: <DashboardPage /> },
-      { path: '/sessions', element: <SessionsPage /> },
-      { path: '/groups', element: <GroupsPage /> },
-      { path: '/dialogs', element: <DialogsPage /> },
-      { path: '/tasks', element: <TasksPage /> },
-      { path: '/conversation', element: <ConversationPage /> },
-      { path: '/audit', element: <AuditPage /> },
-      { path: '/health', element: <HealthPage /> },
-      { path: '/auth', element: <AuthPage /> },
-      { path: '/security', element: <SecurityPage /> },
+      { index: true, element: <DashboardPage /> },
+      { path: 'sessions', element: <SessionsPage /> },
+      { path: 'roster', element: <RosterPage /> },
+      { path: 'groups', element: <GroupsPage /> },
+      { path: 'dialogs', element: <DialogsPage /> },
+      { path: 'tasks', element: <TasksPage /> },
+      { path: 'conversation', element: <ConversationPage /> },
+      { path: 'audit', element: <AuditPage /> },
+      { path: 'health', element: <HealthPage /> },
+      { path: 'auth', element: <AuthPage /> },
+      { path: 'security', element: <SecurityPage /> },
     ],
   },
   { path: '/login', element: <Navigate to="/auth" replace /> },

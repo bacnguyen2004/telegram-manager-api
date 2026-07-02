@@ -460,3 +460,31 @@ export interface MetadataOverviewData {
   recent_audit: AuditLogItem[]
 }
 
+export interface RosterColumnItem {
+  column_key: string
+  label: string
+  sort_order: number
+  created_at: string | null
+}
+
+export interface RosterRowItem {
+  phone: string
+  display_name: string | null
+  username: string | null
+  status: string | null
+  last_synced_at: string | null
+  imported_at: string | null
+  custom_fields: Record<string, string>
+}
+
+export interface RosterData {
+  database_enabled: boolean
+  columns: RosterColumnItem[]
+  rows: RosterRowItem[]
+}
+
+export interface RosterImportResult {
+  updated_phones: number
+  new_columns: number
+}
+
