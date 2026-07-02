@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { Pagination } from '../components/Pagination'
 import { PhoneSelect } from '../components/PhoneSelect'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
 import type { AuditLogItem, MetadataOverviewData } from '../types/api'
 import {
   AUDIT_CATEGORY_OPTIONS,
@@ -47,6 +48,7 @@ function AuditDetailCell({ detail }: { detail: string | null }) {
 }
 
 export function AuditPage() {
+  const accounts = useSessionAccounts()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialPhone = searchParams.get('phone') ?? ''
   const initialCategory = categoryFromParam(searchParams.get('category'))
@@ -254,6 +256,9 @@ export function AuditPage() {
               allowManual
               required={false}
               label="Lọc theo acc"
+              sessions={accounts.sessions}
+              metaByPhone={accounts.metaByPhone}
+              loading={accounts.loading}
             />
             {hasActiveFilters ? (
               <button type="button" className="btn btn--sm btn--ghost" onClick={resetFilters}>

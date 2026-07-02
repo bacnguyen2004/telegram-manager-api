@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { PasswordInput } from '../components/PasswordInput'
 import { PhoneSelect } from '../components/PhoneSelect'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
 import type { PrivacyRuleType } from '../types/api'
 
 const PRIVACY_OPTIONS: {
@@ -30,6 +31,7 @@ const PRIVACY_OPTIONS: {
 
 export function SecurityPage() {
   const [searchParams] = useSearchParams()
+  const accounts = useSessionAccounts()
   const [phone, setPhone] = useState(() => searchParams.get('phone') ?? '')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -138,11 +140,20 @@ export function SecurityPage() {
         <aside className="panel security-session-panel">
           <div className="security-panel-head">
             <h2>Session</h2>
-            <p className="panel-meta">{phone || 'Chọn tài khoản'}</p>
+            <p className="panel-meta">
+              {phone ? accounts.getPickerLabel(phone) : 'Chọn tài khoản'}
+            </p>
           </div>
 
           <div className="security-session-form">
-            <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
+            <PhoneSelect
+              value={phone}
+              onChange={setPhone}
+              allowManual={false}
+              sessions={accounts.sessions}
+              metaByPhone={accounts.metaByPhone}
+              loading={accounts.loading}
+            />
           </div>
 
           <div className="security-session-notes">

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api/client'
+import type { SessionMetaOverviewItem } from '../types/api'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
+import { formatSessionPickerLabel, getMetaForPhone } from '../utils/sessionDisplay'
 
 interface PhoneSelectProps {
   value: string
@@ -8,6 +9,9 @@ interface PhoneSelectProps {
   required?: boolean
   label?: string
   emptyOptionLabel?: string
+  sessions?: string[]
+  metaByPhone?: Map<string, SessionMetaOverviewItem>
+  loading?: boolean
 }
 
 export function PhoneSelect({
@@ -17,23 +21,15 @@ export function PhoneSelect({
   required = true,
   label = 'Chọn tài khoản',
   emptyOptionLabel,
+  sessions: sessionsProp,
+  metaByPhone: metaProp,
+  loading: loadingProp,
 }: PhoneSelectProps) {
   const emptyLabel = emptyOptionLabel ?? (required ? '— Chọn số điện thoại —' : 'Tất cả acc')
-  const [sessions, setSessions] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await api.listSessions()
-        if (res.success && res.data) {
-          setSessions(res.data.sessions)
-        }
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+  const internal = useSessionAccounts({ enabled: sessionsProp === undefined })
+  const sessions = sessionsProp ?? internal.sessions
+  const metaByPhone = metaProp ?? internal.metaByPhone
+  const loading = loadingProp ?? internal.loading
 
   if (loading) {
     return <p className="muted">Đang tải danh sách session…</p>
@@ -55,7 +51,7 @@ export function PhoneSelect({
           <option value="">{emptyLabel}</option>
           {sessions.map((phone) => (
             <option key={phone} value={phone}>
-              {phone}
+              {formatSessionPickerLabel(phone, getMetaForPhone(phone, metaByPhone))}
             </option>
           ))}
         </select>

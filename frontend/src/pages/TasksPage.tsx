@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import { Alert } from '../components/Alert'
 import { StatusBadge } from '../components/StatusBadge'
 import type { CheckSessionItem, PollInfoData, PollOptionItem } from '../types/api'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
 import { DEFAULT_QUICK_REACTIONS } from '../utils/reactions'
 import {
   actionsForGroup,
@@ -82,7 +83,8 @@ function pollCancelWarnings(info: PollInfoData): string[] {
 type TodoCancelMode = 'all' | 'pick'
 
 export function TasksPage() {
-  const [sessions, setSessions] = useState<string[]>([])
+  const { sessions, loading: sessionsLoading, reload, getPickerLabel } =
+    useSessionAccounts()
   const [checkResults, setCheckResults] = useState<CheckSessionItem[]>([])
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set())
   const [targetLink, setTargetLink] = useState('')
@@ -100,7 +102,7 @@ export function TasksPage() {
   const [preCheckLive, setPreCheckLive] = useState(true)
   const [pipelineStepDelaySeconds, setPipelineStepDelaySeconds] = useState(3)
   const [showRunOptions, setShowRunOptions] = useState(false)
-  const [loadingSessions, setLoadingSessions] = useState(true)
+
   const [checking, setChecking] = useState(false)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<TaskProgressRow[]>([])
@@ -250,32 +252,31 @@ export function TasksPage() {
   }, [progress])
 
   const loadSessions = useCallback(async () => {
-    setLoadingSessions(true)
     setError('')
     try {
-      const res = await api.listSessions()
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Không tải được sessions')
-        return
-      }
-      setSessions(res.data.sessions)
+      const result = await reload()
+      if (!result) return
       setSelectedPhones((prev) => {
         const next = new Set<string>()
-        for (const phone of res.data!.sessions) {
+        for (const phone of result.sessions) {
           if (prev.has(phone)) next.add(phone)
         }
         return next
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không kết nối được API.')
-    } finally {
-      setLoadingSessions(false)
     }
-  }, [])
+  }, [reload])
 
   useEffect(() => {
-    void loadSessions()
-  }, [loadSessions])
+    setSelectedPhones((prev) => {
+      const next = new Set<string>()
+      for (const phone of sessions) {
+        if (prev.has(phone)) next.add(phone)
+      }
+      return next
+    })
+  }, [sessions])
 
   useEffect(() => {
     if (action !== 'send-media') {
@@ -592,7 +593,7 @@ export function TasksPage() {
             type="button"
             className="btn btn--ghost"
             onClick={() => void loadSessions()}
-            disabled={loadingSessions || running}
+            disabled={sessionsLoading || running}
           >
             Tải lại acc
           </button>
@@ -610,7 +611,7 @@ export function TasksPage() {
       <section className="stats-grid tasks-stats">
         <article className="stat-card">
           <p className="stat-label">Sessions</p>
-          <p className="stat-value">{loadingSessions ? '—' : sessions.length}</p>
+          <p className="stat-value">{sessionsLoading ? '—' : sessions.length}</p>
         </article>
         <article className="stat-card stat-card--active">
           <p className="stat-label">Đã chọn</p>
@@ -677,7 +678,7 @@ export function TasksPage() {
           </div>
 
           <ul className="tasks-account-list">
-            {loadingSessions ? (
+            {sessionsLoading ? (
               <li className="tasks-account-empty">Đang tải sessions…</li>
             ) : sessions.length === 0 ? (
               <li className="tasks-account-empty">
@@ -702,10 +703,9 @@ export function TasksPage() {
                         disabled={running}
                       />
                       <span className="tasks-account-main">
-                        <span className="tasks-account-phone">{phone}</span>
-                        {check?.username ? (
-                          <span className="tasks-account-username">@{check.username}</span>
-                        ) : null}
+                        <span className="tasks-account-phone">
+                          {getPickerLabel(phone, check?.username)}
+                        </span>
                       </span>
                       {check ? (
                         <StatusBadge status={check.status} />
@@ -1419,7 +1419,7 @@ export function TasksPage() {
                   {progress.map((row, index) => (
                     <tr key={row.phone} className={`tasks-row--${row.status}`}>
                       <td>{index + 1}</td>
-                      <td className="mono">{row.phone}</td>
+                      <td className="mono">{getPickerLabel(row.phone)}</td>
                       <td>
                         <span className={`tasks-status-pill tasks-status-pill--${row.status}`}>
                           {statusLabel(row.status)}

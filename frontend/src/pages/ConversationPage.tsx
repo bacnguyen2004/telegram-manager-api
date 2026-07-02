@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { Alert } from '../components/Alert'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
 import {
   analyzeConversationPrompt,
   buildDefaultCryptoPrompt,
@@ -129,7 +130,8 @@ function ConvEmptyChatIcon() {
 }
 
 export function ConversationPage() {
-  const [sessions, setSessions] = useState<string[]>([])
+  const { sessions, loading: sessionsLoading, reload, getPickerLabel } =
+    useSessionAccounts()
   const [groupLink, setGroupLink] = useState('')
   const [mode, setMode] = useState<ConversationMode>('multi')
   const [promptStyle, setPromptStyle] = useState<ConversationPromptStyle>('flexible')
@@ -157,7 +159,6 @@ export function ConversationPage() {
   const [activeLineId, setActiveLineId] = useState(0)
   const [job, setJob] = useState<ConversationJobData | null>(null)
   const [jobHistory, setJobHistory] = useState<ConversationJobSummary[]>([])
-  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -304,24 +305,23 @@ export function ConversationPage() {
   }, [])
 
   const loadSessions = useCallback(async () => {
-    setLoading(true)
     setError('')
     try {
-      const res = await api.listSessions()
-      if (!res.success || !res.data) {
-        setError(res.error ?? 'Không tải được sessions')
-        return
-      }
-      const phones = res.data.sessions
-      setSessions(phones)
+      const result = await reload()
+      if (!result) return
+      const phones = result.sessions
       setPhoneA((prev) => prev || phones[0] || '')
       setPhoneB((prev) => prev || phones[1] || '')
     } catch {
       setError('Không kết nối được API. Kiểm tra backend port 8001.')
-    } finally {
-      setLoading(false)
     }
-  }, [])
+  }, [reload])
+
+  useEffect(() => {
+    if (sessions.length === 0) return
+    setPhoneA((prev) => prev || sessions[0] || '')
+    setPhoneB((prev) => prev || sessions[1] || '')
+  }, [sessions])
 
   useEffect(() => {
     const draft = loadConversationDraft()
@@ -370,9 +370,8 @@ export function ConversationPage() {
       }
     }
     setDraftHydrated(true)
-    void loadSessions()
     void loadJobHistory()
-  }, [loadSessions, loadJobHistory])
+  }, [loadJobHistory])
 
   useEffect(() => {
     if (!draftHydrated) return
@@ -833,7 +832,7 @@ export function ConversationPage() {
     ? speakerFormError
     : !groupLink.trim()
       ? 'Chưa nhập link nhóm'
-      : busy || loading
+      : busy || sessionsLoading
         ? 'Đang xử lý…'
         : ''
   const retryBlockReason = !jobIdRef.current
@@ -910,9 +909,9 @@ export function ConversationPage() {
             type="button"
             className="btn btn--ghost btn--sm"
             onClick={() => void loadSessions()}
-            disabled={loading || busy}
+            disabled={sessionsLoading || busy}
           >
-            {loading ? 'Đang tải…' : 'Tải lại acc'}
+            {sessionsLoading ? 'Đang tải…' : 'Tải lại acc'}
           </button>
         </div>
       </header>
@@ -934,7 +933,7 @@ export function ConversationPage() {
         </article>
         <article className="stat-card conv-stat-card conv-stat-card--accounts">
           <p className="stat-label">Accounts</p>
-          <p className="stat-value">{loading ? '—' : sessions.length}</p>
+          <p className="stat-value">{sessionsLoading ? '—' : sessions.length}</p>
           <p className="stat-foot conv-stat-foot">Telegram sessions</p>
         </article>
         <article className="stat-card conv-stat-card conv-stat-card--progress">
@@ -1262,7 +1261,7 @@ export function ConversationPage() {
                                 item.title === 'Vai A' ? [phoneB] : [phoneA],
                               ).map((phone) => (
                                 <option key={phone} value={phone}>
-                                  {phone}
+                                  {getPickerLabel(phone)}
                                 </option>
                               ))}
                             </select>
@@ -1320,7 +1319,7 @@ export function ConversationPage() {
                                     .map((item) => item.phone),
                                 ).map((phone) => (
                                   <option key={phone} value={phone}>
-                                    {phone}
+                                    {getPickerLabel(phone)}
                                   </option>
                                 ))}
                               </select>
@@ -1543,7 +1542,7 @@ export function ConversationPage() {
                   <button
                     type="button"
                     className="btn btn--primary btn--sm"
-                    disabled={busy || loading || Boolean(speakerFormError)}
+                    disabled={busy || sessionsLoading || Boolean(speakerFormError)}
                     onClick={() => void handleParse()}
                   >
                     Tách nội dung

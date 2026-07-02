@@ -5,6 +5,7 @@ import { Alert } from '../components/Alert'
 import { Pagination } from '../components/Pagination'
 import { PhoneSelect } from '../components/PhoneSelect'
 import { usePagination } from '../hooks/usePagination'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
 import type { GroupItem, GroupScanItem } from '../types/api'
 import { formatDate } from '../utils/format'
 
@@ -69,6 +70,7 @@ function sortGroups(
 
 export function GroupsPage() {
   const [searchParams] = useSearchParams()
+  const accounts = useSessionAccounts()
   const [phone, setPhone] = useState(() => searchParams.get('phone') ?? '')
   const [groups, setGroups] = useState<GroupItem[]>([])
   const [filter, setFilter] = useState<KindFilter>('all')
@@ -347,14 +349,23 @@ export function GroupsPage() {
         <aside className="panel groups-control-panel">
           <div className="groups-control-head">
             <h2>Session</h2>
-            <p className="panel-meta">{phone || 'Chọn tài khoản'}</p>
+            <p className="panel-meta">
+              {phone ? accounts.getPickerLabel(phone) : 'Chọn tài khoản'}
+            </p>
           </div>
 
           <form
             className="groups-control-form"
             onSubmit={(e) => void handleLoadGroups(e)}
           >
-            <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
+            <PhoneSelect
+              value={phone}
+              onChange={setPhone}
+              allowManual={false}
+              sessions={accounts.sessions}
+              metaByPhone={accounts.metaByPhone}
+              loading={accounts.loading}
+            />
             <button
               type="submit"
               className="btn btn--primary groups-scan-btn"

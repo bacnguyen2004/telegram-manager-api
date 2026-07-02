@@ -14,6 +14,12 @@ import type {
 } from '../types/api'
 import { auditActionLabel } from '../utils/auditLabels'
 import { formatBytes, formatDate, formatRelativeDate } from '../utils/format'
+import {
+  buildMetaByPhone,
+  formatUsername,
+  getMetaForPhone,
+  phoneLookupKeys,
+} from '../utils/sessionDisplay'
 
 type SessionDisplaySource = 'check' | 'db' | null
 type SessionStatusFilter = 'all' | 'active' | 'unauthorized' | 'error' | 'unchecked'
@@ -47,41 +53,6 @@ interface SessionDisplayInfo {
   username: string | null
   syncedAt: string | null
   source: SessionDisplaySource
-}
-
-function phoneLookupKeys(phone: string): string[] {
-  const trimmed = phone.trim()
-  const keys = new Set<string>([trimmed])
-  const digits = trimmed.replace(/\D/g, '')
-  if (digits) {
-    keys.add(digits)
-    keys.add(`+${digits}`)
-  }
-  if (trimmed.startsWith('+')) {
-    keys.add(trimmed.slice(1))
-  }
-  return [...keys]
-}
-
-function buildMetaByPhone(items: SessionMetaOverviewItem[]): Map<string, SessionMetaOverviewItem> {
-  const map = new Map<string, SessionMetaOverviewItem>()
-  for (const item of items) {
-    for (const key of phoneLookupKeys(item.phone)) {
-      map.set(key, item)
-    }
-  }
-  return map
-}
-
-function getMetaForPhone(
-  phone: string,
-  metaByPhone: Map<string, SessionMetaOverviewItem>,
-): SessionMetaOverviewItem | undefined {
-  for (const key of phoneLookupKeys(phone)) {
-    const meta = metaByPhone.get(key)
-    if (meta) return meta
-  }
-  return undefined
 }
 
 function resolveSyncedAt(
@@ -118,12 +89,6 @@ function resolveSessionDisplay(
     syncedAt,
     source: syncedAt ? 'db' : null,
   }
-}
-
-function formatUsername(value: string | null | undefined): string | null {
-  const trimmed = value?.trim()
-  if (!trimmed) return null
-  return trimmed.startsWith('@') ? trimmed : `@${trimmed}`
 }
 
 function resolveAccountLabel(

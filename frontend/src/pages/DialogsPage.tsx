@@ -12,6 +12,7 @@ import { MessageReactionBar } from '../components/MessageReactionBar'
 import { MessageReplyQuote } from '../components/MessageReplyQuote'
 import { MessageText } from '../components/MessageText'
 import { PhoneSelect } from '../components/PhoneSelect'
+import { useSessionAccounts } from '../hooks/useSessionAccounts'
 import { PinnedMessagesBar } from '../components/PinnedMessagesBar'
 import { PinnedMessagesPanel } from '../components/PinnedMessagesPanel'
 import type {
@@ -105,6 +106,7 @@ function ChatEmptyIcon() {
 }
 
 export function DialogsPage() {
+  const accounts = useSessionAccounts()
   const [phone, setPhone] = useState('')
   const [dialogs, setDialogs] = useState<DialogItem[]>([])
   const [counts, setCounts] = useState<DialogCounts | null>(null)
@@ -1864,7 +1866,14 @@ export function DialogsPage() {
           className="dialogs-load-bar"
           onSubmit={(e) => void handleLoadDialogs(e)}
         >
-          <PhoneSelect value={phone} onChange={setPhone} allowManual={false} />
+          <PhoneSelect
+            value={phone}
+            onChange={setPhone}
+            allowManual={false}
+            sessions={accounts.sessions}
+            metaByPhone={accounts.metaByPhone}
+            loading={accounts.loading}
+          />
           <button
             type="submit"
             className="btn btn--primary"
