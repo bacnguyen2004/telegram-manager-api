@@ -207,7 +207,12 @@ async def test_get_messages_has_more_older(client, monkeypatch):
 
 
 async def test_get_pinned_messages_success(client, monkeypatch):
-    async def mock_get_pinned_messages(phone: str, peer_id: str, limit: int = 10):
+    async def mock_get_pinned_messages(
+        phone: str,
+        peer_id: str,
+        limit: int = 10,
+        skip: int = 0,
+    ):
         return {
             "status": "success",
             "phone": phone,

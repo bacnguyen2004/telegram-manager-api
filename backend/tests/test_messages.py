@@ -144,6 +144,7 @@ async def test_send_media_success(client, monkeypatch):
         *,
         caption: str | None = None,
         reply_to_msg_id: int | None = None,
+        media_kind: str = "image",
     ) -> dict:
         return {
             "status": "success",
